@@ -39,6 +39,16 @@ jobs:
             2>&1 | tee build.log | grep -E "error:|warning: .*Sintr/|BUILD (SUCCEEDED|FAILED)|Resolve Package" || true
           grep -q "BUILD SUCCEEDED" build.log
 
+      - name: Report package versions
+        if: success() && matrix.platform == 'iOS'
+        shell: bash
+        run: |
+          f=Sintr.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          if [ -f "$f" ]; then
+            msg=$(sed -e 's/%/%25/g' "$f" | awk 'BEGIN{ORS="%0A"} {print}')
+            echo "::notice title=Package.resolved::$msg"
+          fi
+
       - name: Point at compile errors
         if: failure()
         shell: bash
