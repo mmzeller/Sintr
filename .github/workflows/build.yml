@@ -44,6 +44,8 @@ jobs:
         shell: bash
         run: |
           grep -E '^/.*\.(swift|plist|xcassets|pbxproj).*: error: |^error: |: error: ' build.log | sed "s#$GITHUB_WORKSPACE/##g" | sort -u > errors.txt || true
+          # Package problems explain themselves on the lines after the error.
+          grep -A12 "Could not resolve package dependencies" build.log | head -14 | sed 's/^/  /' >> errors.txt || true
           echo "$(wc -l < errors.txt) error line(s)"
           cat errors.txt | head -100
           # One annotation per error (GitHub shows up to 10 per step)...
