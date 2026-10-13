@@ -76,7 +76,7 @@ enum Exporter {
     }
 
     /// Writes the export to a fresh temporary folder and returns the file URLs (for sharing).
-    static func writeFiles(_ notes: [Note], format: ExportFormat, store: NoteStore, includeAudio: Bool) throws -> [URL] {
+    @MainActor static func writeFiles(_ notes: [Note], format: ExportFormat, store: NoteStore, includeAudio: Bool) throws -> [URL] {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("Sintr export \(UUID().uuidString.prefix(6))", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

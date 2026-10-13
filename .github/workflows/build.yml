@@ -43,14 +43,20 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          grep -E '^/.*\.swift:[0-9]+:[0-9]+: error: ' build.log | sort -u | head -40 | while IFS= read -r line; do
-            file=$(printf '%s' "$line" | cut -d: -f1)
-            row=$(printf '%s' "$line" | cut -d: -f2)
-            col=$(printf '%s' "$line" | cut -d: -f3)
-            msg=$(printf '%s' "$line" | cut -d: -f5- | sed -e 's/^ //' -e 's/%/%25/g')
-            echo "::error file=${file#"$GITHUB_WORKSPACE/"},line=$row,col=$col::$msg"
+          grep -E '^/.*\.(swift|plist|xcassets|pbxproj).*: error: |^error: |: error: ' build.log | sed "s#$GITHUB_WORKSPACE/##g" | sort -u > errors.txt || true
+          echo "$(wc -l < errors.txt) error line(s)"
+          cat errors.txt | head -100
+          # One annotation per error (GitHub shows up to 10 per step)...
+          head -10 errors.txt | while IFS= read -r line; do
+            msg=$(printf '%s' "$line" | sed -e 's/%/%25/g')
+            echo "::error::$msg"
           done
-          grep -E "error:" build.log | sort -u | head -60
+          # ...and the full list in batches of 8, so every error can be read from the run's summary.
+          split -l 8 errors.txt batch_ 2>/dev/null || true
+          for f in $(ls batch_* 2>/dev/null | head -10); do
+            msg=$(sed -e 's/%/%25/g' "$f" | awk 'BEGIN{ORS="%0A"} {print}')
+            echo "::warning title=Errors::$msg"
+          done
 
       - name: Save the build log
         if: always()

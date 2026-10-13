@@ -133,11 +133,11 @@ final class NoteStore {
 
     // MARK: Files
 
-    func fileURL(for id: UUID) -> URL {
+    nonisolated func fileURL(for id: UUID) -> URL {
         notesFolder.appendingPathComponent("\(id.uuidString).json")
     }
 
-    func recordingURL(_ fileName: String) -> URL {
+    nonisolated func recordingURL(_ fileName: String) -> URL {
         recordingsFolder.appendingPathComponent(fileName)
     }
 
