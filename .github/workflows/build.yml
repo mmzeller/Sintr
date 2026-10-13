@@ -1,0 +1,60 @@
+name: Build Sintr
+
+# Every push is compiled for iPhone and for Mac on GitHub's Macs, so a mistake shows up
+# here (with the exact file and line) before anyone opens Xcode.
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: macos-26
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [iOS, macOS]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use the newest Xcode 26
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
+          xcodebuild -version
+
+      - name: Build for ${{ matrix.platform }}
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Sintr.xcodeproj \
+            -scheme Sintr \
+            -configuration Debug \
+            -destination "generic/platform=${{ matrix.platform }}" \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee build.log | grep -E "error:|warning: .*Sintr/|BUILD (SUCCEEDED|FAILED)|Resolve Package" || true
+          grep -q "BUILD SUCCEEDED" build.log
+
+      - name: Point at compile errors
+        if: failure()
+        shell: bash
+        run: |
+          grep -E '^/.*\.swift:[0-9]+:[0-9]+: error: ' build.log | sort -u | head -40 | while IFS= read -r line; do
+            file=$(printf '%s' "$line" | cut -d: -f1)
+            row=$(printf '%s' "$line" | cut -d: -f2)
+            col=$(printf '%s' "$line" | cut -d: -f3)
+            msg=$(printf '%s' "$line" | cut -d: -f5- | sed -e 's/^ //' -e 's/%/%25/g')
+            echo "::error file=${file#"$GITHUB_WORKSPACE/"},line=$row,col=$col::$msg"
+          done
+          grep -E "error:" build.log | sort -u | head -60
+
+      - name: Save the build log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: build-log-${{ matrix.platform }}
+          path: build.log
