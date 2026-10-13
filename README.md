@@ -72,6 +72,12 @@ bash ~/Sintr/update.sh
 ```
 Then press ▶ in Xcode again (and run `install-mac.sh` again if you use the copy in Applications). Your notes are kept.
 
+## Tips
+
+- **On calls, wear headphones** if you can. Without them your Mac's microphone also hears the other person through the speakers, so some of their words show up twice — once as “Them” and once as “Me”.
+- Type only the key points in **My notes**; Enhance fills in the rest from the transcript and keeps your points first.
+- The first Enhance with the phone model loads it into memory and takes a little longer.
+
 ## If something goes wrong
 
 - **“Them” stays empty on the Mac:** System Settings → Privacy & Security → Screen & System Audio Recording → allow Sintr under “System Audio Recording Only”, then quit and reopen Sintr.

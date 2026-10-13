@@ -15,6 +15,7 @@ final class LiveTranscriber: @unchecked Sendable {
     private let input: AsyncStream<AnalyzerInput>
     private let inputContinuation: AsyncStream<AnalyzerInput>.Continuation
     private var resultsTask: Task<Void, Never>?
+    private var started = false
 
     private init(speaker: String, format: AVAudioFormat, transcriber: SpeechTranscriber, analyzer: SpeechAnalyzer) {
         self.speaker = speaker
@@ -66,6 +67,7 @@ final class LiveTranscriber: @unchecked Sendable {
             }
         }
         try await analyzer.start(inputSequence: input)
+        started = true
     }
 
     func feed(_ buffer: AVAudioPCMBuffer) {
@@ -75,6 +77,10 @@ final class LiveTranscriber: @unchecked Sendable {
     /// Lets the model finish the last words, then stops.
     func finish() async {
         inputContinuation.finish()
+        guard started else {
+            resultsTask?.cancel()
+            return
+        }
         do {
             try await analyzer.finalizeAndFinishThroughEndOfInput()
         } catch {

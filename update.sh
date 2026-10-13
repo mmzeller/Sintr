@@ -15,6 +15,8 @@ fi
 # Remember it, undo that one local change so the update applies cleanly, then put it back.
 TEAM=$(grep -oE 'DEVELOPMENT_TEAM = [A-Z0-9]{10};' "$PROJECT" | head -1 | grep -oE '[A-Z0-9]{10}' || true)
 git checkout -- "$PROJECT" 2>/dev/null || true
+# Xcode also rewrites the list of package versions; let the update replace it.
+git checkout -- Sintr.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved 2>/dev/null || true
 
 printf "\n\033[1m%s\033[0m\n" "Getting the latest Sintr…"
 if ! git pull --ff-only; then
