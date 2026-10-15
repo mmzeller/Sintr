@@ -79,7 +79,8 @@ jobs:
 
   portable:
     name: Portable (Mac)
-    runs-on: macos-15
+    # Running Sintr needs macOS 26 (building works on 15).
+    runs-on: macos-26
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v6
