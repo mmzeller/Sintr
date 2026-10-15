@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct SettingsView: View {
     @Environment(NoteStore.self) private var store
@@ -29,6 +32,9 @@ struct SettingsView: View {
     var body: some View {
         Form {
             privacySection
+            #if os(macOS)
+            storageSection
+            #endif
             transcriptionSection
             recordingSection
             phoneModelSection
@@ -53,6 +59,37 @@ struct SettingsView: View {
             }
         }
     }
+
+    #if os(macOS)
+    private var storageSection: some View {
+        Section {
+            LabeledContent("Mode") {
+                if Storage.isPortable {
+                    Label("Portable", systemImage: "externaldrive").foregroundStyle(.tint)
+                } else {
+                    Text("This Mac")
+                }
+            }
+            LabeledContent("Notes are in") {
+                Text(Storage.root.path)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+            Button("Show in Finder", systemImage: "folder") {
+                NSWorkspace.shared.activateFileViewerSelecting([Storage.root])
+            }
+        } header: {
+            Text("Storage")
+        } footer: {
+            Text(Storage.isPortable
+                 ? "Portable mode: notes, recordings, downloaded models and settings live in the “\(Storage.dataFolderName)” folder next to Sintr. Keep the two together, and quit Sintr before ejecting the drive. Each Mac keeps only its own permissions, Apple's speech model, and your Claude key if you add one."
+                 : "To carry Sintr and your notes on a thumb drive or in any folder, build the portable version — see “Portable version” in the README.")
+        }
+    }
+    #endif
 
     private var transcriptionSection: some View {
         Section {

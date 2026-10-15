@@ -62,8 +62,7 @@ struct ModelFiles: Sendable {
     static let patterns = ["*.safetensors", "*.json", "*.jinja", "*.txt", "*.model", "*.tiktoken"]
 
     static var folder: URL {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let folder = support.appendingPathComponent("Sintr/Models", isDirectory: true)
+        let folder = Storage.root.appendingPathComponent("Models", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // Models are large and can always be downloaded again: keep them out of backups.
         var values = URLResourceValues()

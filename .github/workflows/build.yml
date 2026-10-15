@@ -76,3 +76,67 @@ jobs:
         with:
           name: build-log-${{ matrix.platform }}
           path: build.log
+
+  portable:
+    name: Portable (Mac)
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use the newest Xcode 26
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
+          xcodebuild -version
+
+      - name: Make the portable folder (like make-portable.sh on your Mac)
+        shell: bash
+        run: |
+          set -o pipefail
+          bash make-portable.sh "$RUNNER_TEMP" 2>&1 | tee build.log
+
+      - name: Check it runs from a folder and keeps notes beside itself
+        shell: bash
+        run: |
+          P="$RUNNER_TEMP/Sintr Portable"
+          ls -la "$P" "$P/Sintr Data"
+          lipo -archs "$P/Sintr.app/Contents/MacOS/Sintr"
+          codesign --verify --deep --strict --verbose=2 "$P/Sintr.app"
+          OUT=$(perl -e 'alarm 120; exec @ARGV' "$P/Sintr.app/Contents/MacOS/Sintr" --storage-check 2>&1); CODE=$?
+          echo "$OUT"
+          echo "::notice title=Portable from a folder (exit $CODE)::$(printf '%s' "$OUT" | awk 'BEGIN{ORS="%0A"} {print}')"
+          [ $CODE -eq 0 ] \
+            && grep -qxF "root=$P/Sintr Data" <<<"$OUT" \
+            && grep -qx "portable=true" <<<"$OUT" \
+            && grep -qx "note=true settings=true" <<<"$OUT"
+          test -f "$P/Sintr Data/Settings.plist"
+          test -d "$P/Sintr Data/Notes"
+
+      - name: Check the same app without a Sintr Data folder uses normal storage
+        shell: bash
+        run: |
+          APP="build/portable/Build/Products/Release/Sintr.app"
+          OUT=$(perl -e 'alarm 120; exec @ARGV' "$APP/Contents/MacOS/Sintr" --storage-check 2>&1); CODE=$?
+          echo "$OUT"
+          [ $CODE -eq 0 ] \
+            && grep -qxF "root=$HOME/Library/Application Support/Sintr" <<<"$OUT" \
+            && grep -qx "portable=false" <<<"$OUT"
+
+      - name: Try it on an exFAT "thumb drive" (disk image)
+        shell: bash
+        run: |
+          hdiutil create -size 800m -fs ExFAT -volname SINTRTEST "$RUNNER_TEMP/thumb.dmg" >/dev/null
+          hdiutil attach "$RUNNER_TEMP/thumb.dmg" >/dev/null
+          bash make-portable.sh /Volumes/SINTRTEST 2>&1 | tail -3
+          P="/Volumes/SINTRTEST/Sintr Portable"
+          RESULT=""
+          for RUN in 1 2; do
+            OUT=$(perl -e 'alarm 120; exec @ARGV' "$P/Sintr.app/Contents/MacOS/Sintr" --storage-check 2>&1); CODE=$?
+            RESULT+="run $RUN (exit $CODE):%0A$(printf '%s' "$OUT" | awk 'BEGIN{ORS="%0A"} {print}')"
+          done
+          SIG=$(codesign --verify --deep --strict "$P/Sintr.app" 2>&1 && echo "signature OK")
+          DOTS=$(find "$P" -name '._*' | wc -l | tr -d ' ')
+          echo "::notice title=Portable on exFAT::${RESULT}codesign: ${SIG}%0A._ files: ${DOTS}"
+          echo -e "${RESULT//%0A/\\n}"; echo "$SIG"; echo "._ files: $DOTS"
+          grep -q "portable=true" <<<"$OUT" && grep -q "note=true settings=true" <<<"$OUT"

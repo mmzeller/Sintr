@@ -10,6 +10,10 @@ struct SintrApp: App {
 
     init() {
         AppSettings.register()
+        PortableSettings.start()
+        #if os(macOS)
+        StorageCheck.runIfRequested()
+        #endif
     }
 
     var body: some Scene {

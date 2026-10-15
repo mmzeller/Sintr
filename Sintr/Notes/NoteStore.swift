@@ -1,8 +1,8 @@
 import Foundation
 import Observation
 
-/// Keeps every note as its own JSON file in the app's private folder
-/// (Application Support/Sintr/Notes) and recordings in Application Support/Sintr/Recordings.
+/// Keeps every note as its own JSON file in Notes/ and recordings in Recordings/, inside
+/// Storage.root — the app's private folder, or "Sintr Data" next to the app in portable mode.
 /// Nothing here touches the network.
 @MainActor
 @Observable
@@ -18,17 +18,43 @@ final class NoteStore {
     @ObservationIgnored private var pendingSaves: Set<UUID> = []
     @ObservationIgnored private var saveTask: Task<Void, Never>?
 
-    init() {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        rootFolder = support.appendingPathComponent("Sintr", isDirectory: true)
+    init(root: URL = Storage.root) {
+        rootFolder = root
         notesFolder = rootFolder.appendingPathComponent("Notes", isDirectory: true)
         recordingsFolder = rootFolder.appendingPathComponent("Recordings", isDirectory: true)
         for folder in [rootFolder, notesFolder, recordingsFolder] {
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         }
+        #if os(macOS)
+        if !Storage.isPortable, root == Storage.standardRoot { Self.bringOverSandboxedNotes(into: root) }
+        #endif
         applyBackupSetting()
         load()
     }
+
+    #if os(macOS)
+    /// The first Mac version kept its data inside a sandbox container. Copy it to the
+    /// normal folder once, if there's nothing here yet. The old copy is left untouched.
+    private static func bringOverSandboxedNotes(into root: URL) {
+        let fm = FileManager.default
+        let marker = root.appendingPathComponent(".checked-old-location")
+        guard !fm.fileExists(atPath: marker.path) else { return }
+        defer { fm.createFile(atPath: marker.path, contents: Data()) }
+        let old = Storage.oldSandboxRoot
+        let container = old.deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        guard fm.fileExists(atPath: container.path) else { return }
+        let here = (try? fm.contentsOfDirectory(atPath: root.appendingPathComponent("Notes").path)) ?? []
+        guard here.filter({ $0.hasSuffix(".json") }).isEmpty else { return }
+        for sub in ["Notes", "Recordings"] {
+            let from = old.appendingPathComponent(sub)
+            let to = root.appendingPathComponent(sub)
+            for name in (try? fm.contentsOfDirectory(atPath: from.path)) ?? [] {
+                try? fm.copyItem(at: from.appendingPathComponent(name), to: to.appendingPathComponent(name))
+            }
+        }
+    }
+    #endif
 
     // MARK: Reading
 
@@ -37,7 +63,7 @@ final class NoteStore {
             at: notesFolder, includingPropertiesForKeys: nil)) ?? []
         var loaded: [Note] = []
         var unreadable = 0
-        for file in files where file.pathExtension == "json" {
+        for file in files where file.pathExtension == "json" && !Storage.isAppleDouble(file) {
             do {
                 let data = try Data(contentsOf: file)
                 loaded.append(try NoteArchive.decoder.decode(Note.self, from: data))
@@ -155,7 +181,7 @@ final class NoteStore {
     func recordingsSize() -> Int64 {
         let files = (try? FileManager.default.contentsOfDirectory(
             at: recordingsFolder, includingPropertiesForKeys: [.fileSizeKey])) ?? []
-        return files.reduce(0) { total, url in
+        return files.filter { !Storage.isAppleDouble($0) }.reduce(0) { total, url in
             total + Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
         }
     }

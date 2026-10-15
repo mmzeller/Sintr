@@ -6,6 +6,7 @@ struct ContentView: View {
     @Environment(Importer.self) private var importer
     @Environment(AppState.self) private var appState
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
+    @State private var showStorageWarning = Storage.current.warning != nil
 
     var body: some View {
         @Bindable var appState = appState
@@ -84,6 +85,11 @@ struct ContentView: View {
             Button("OK") { recorder.errorMessage = nil }
         } message: {
             Text(recorder.errorMessage ?? "")
+        }
+        .alert("Where your notes are", isPresented: $showStorageWarning) {
+            Button("OK") {}
+        } message: {
+            Text(Storage.current.warning ?? "")
         }
         .alert("Couldn't save", isPresented: Binding(
             get: { store.lastError != nil },

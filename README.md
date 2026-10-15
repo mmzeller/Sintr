@@ -78,10 +78,36 @@ Then press ▶ in Xcode again (and run `install-mac.sh` again if you use the cop
 - Type only the key points in **My notes**; Enhance fills in the rest from the transcript and keeps your points first.
 - The first Enhance with the phone model loads it into memory and takes a little longer.
 
+## Portable version (thumb drive or any folder)
+
+The portable version is a **Sintr Portable** folder holding `Sintr.app` and a **Sintr Data** folder. Everything Sintr saves — notes, recordings, settings, a downloaded phone model — goes into Sintr Data, next to the app. Put the folder on a thumb drive or anywhere you like, and double-click Sintr.app to run it. Nothing gets installed.
+
+Make it (Xcode needed on this Mac, but no Apple ID or signing team):
+
+```
+bash ~/Sintr/update.sh
+bash ~/Sintr/make-portable.sh /Volumes/YOURDRIVE
+```
+
+Replace `YOURDRIVE` with your thumb drive's name — or type `bash ~/Sintr/make-portable.sh ` (with a space at the end) and drag the drive into the Terminal window. With no drive or folder named, it makes `Sintr Portable` in your home folder. If this Mac already has Sintr notes, it offers to copy them in.
+
+**Updating:** run the same command again with the same drive or folder. The app is replaced; Sintr Data is never touched.
+
+**Good to know:**
+- It runs on Macs with Apple silicon (M1 or newer) on macOS 26 or newer.
+- The first time on each Mac, macOS asks to let Sintr use the microphone, record system audio and, on a thumb drive, access files on a removable volume — click **Allow**. Sintr also asks once per Mac to download Apple's speech model. A Claude key, if you add one, stays on that Mac and never goes on the drive.
+- **Quit Sintr before ejecting the drive**, or the note you're working on may not be saved.
+- **Format the drive APFS (Encrypted)** if you can (Disk Utility → select the drive → Erase → Format: APFS (Encrypted) — this wipes the drive). Then a lost drive doesn't expose your notes, and Macs handle it best. A Windows-style exFAT drive also works.
+- Settings → Storage shows **Portable** and where the notes are, with a Show in Finder button.
+- Back up the Sintr Data folder now and then. If the drive is lost or fails, so are the notes on it.
+
+The iPhone app isn't affected; this is only for the Mac.
+
 ## If something goes wrong
 
 - **“Them” stays empty on the Mac:** System Settings → Privacy & Security → Screen & System Audio Recording → allow Sintr under “System Audio Recording Only”, then quit and reopen Sintr.
 - **The live transcript stopped while the phone was locked:** open the note → Transcript → **Re-transcribe from audio**. (Keep "Keep audio recordings" on in Settings so this is possible.)
 - **Terminal says `xcodebuild requires Xcode, but active developer directory … is a command line tools instance`:** run `bash ~/Sintr/update.sh` once — newer versions of `install-mac.sh` find Xcode by themselves. (Or switch Terminal to Xcode for good: `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.)
 - **Xcode says the Metal toolchain is missing:** Xcode → Settings → Components → Metal Toolchain → Get. It's a one-time download the phone model needs.
+- **Portable Sintr says it's using “this Mac's own storage”:** keep Sintr.app and the Sintr Data folder side by side in the same folder, and if macOS asked about access to a removable volume or your Desktop, allow it (System Settings → Privacy & Security → Files & Folders → Sintr).
 - **Xcode shows a red error when building:** copy the message and paste it to Claude.
