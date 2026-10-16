@@ -105,7 +105,7 @@ struct SintrCommands: Commands {
                 }
             }
             .keyboardShortcut("r", modifiers: [.command, .shift])
-            .disabled(recorder.phase == .finishing)
+            .disabled(recorder.isFinishing)
         }
     }
 }

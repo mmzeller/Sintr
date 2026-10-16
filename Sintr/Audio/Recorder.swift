@@ -38,6 +38,10 @@ final class Recorder {
 
     var isActive: Bool { phase != .idle }
     var isRecording: Bool { phase == .recording }
+    var isFinishing: Bool {
+        if case .finishing = phase { return true }
+        return false
+    }
 
     @ObservationIgnored private var pendingNoteID: UUID?
     @ObservationIgnored private var skipSpeakerPack = false
