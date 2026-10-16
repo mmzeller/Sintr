@@ -214,6 +214,14 @@ enum SpeakerPass {
             }
             step += 1
 
+            // Voices heard only for a moment (a cough, crosstalk) are folded into whoever was
+            // talking around them rather than becoming a speaker of their own.
+            var talkTime: [String: Double] = [:]
+            for turn in turns { talkTime[turn.speaker, default: 0] += turn.end - turn.start }
+            let total = talkTime.values.reduce(0, +)
+            let minor = Set(talkTime.filter { $0.value < 8 && $0.value < total * 0.04 }.keys)
+            let turns = minor.count < talkTime.count ? turns.filter { !minor.contains($0.speaker) } : turns
+
             // Give each voice in this file a note-wide label, reusing labels for voices heard before.
             let isCall = track.speaker == "Them"
             var mapping: [String: String] = [:]
