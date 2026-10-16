@@ -95,8 +95,10 @@ enum Storage {
 enum PortableSettings {
     private static var fileURL: URL { Storage.root.appendingPathComponent("Settings.plist") }
     private static let keys = [
-        AppSettings.language, AppSettings.keepRecordings, AppSettings.captureCallAudio,
-        AppSettings.enhanceStyle, AppSettings.claudeModel, AppSettings.phoneModel,
+        AppSettings.language, AppSettings.keepRecordings, AppSettings.meetingAudio,
+        AppSettings.detectSpeakers, AppSettings.template, AppSettings.glossary,
+        AppSettings.translateTarget, AppSettings.translateEngine,
+        AppSettings.claudeModel, AppSettings.phoneModel,
     ]
     nonisolated(unsafe) private static var observer: NSObjectProtocol?
     nonisolated(unsafe) private static var lastWritten: [String: Any] = [:]

@@ -6,11 +6,13 @@ struct SintrApp: App {
     @State private var recorder = Recorder()
     @State private var importer = Importer()
     @State private var appState = AppState()
+    @State private var templates = TemplateStore()
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
         AppSettings.register()
         PortableSettings.start()
+        SpeakerDetector.blockNetwork()
         #if os(macOS)
         StorageCheck.runIfRequested()
         #endif
@@ -29,7 +31,8 @@ struct SintrApp: App {
             SettingsView()
                 .environment(store)
                 .environment(recorder)
-                .frame(width: 560, height: 640)
+                .environment(templates)
+                .frame(width: 620, height: 720)
         }
         #else
         WindowGroup {
@@ -44,6 +47,7 @@ struct SintrApp: App {
             .environment(recorder)
             .environment(importer)
             .environment(appState)
+            .environment(templates)
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { store.saveNow() }
             }
@@ -59,6 +63,7 @@ final class AppState {
     var exportRequest: ExportRequest?
     var showSettings = false
     var enhanceNoteID: UUID?
+    var translateNoteID: UUID?
 
     struct ExportRequest: Identifiable {
         let id = UUID()

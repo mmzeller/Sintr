@@ -1,5 +1,9 @@
 import AVFoundation
 import Foundation
+#if os(macOS)
+import AudioToolbox
+import CoreAudio
+#endif
 
 /// Captures the microphone with AVAudioEngine.
 /// On iPhone it keeps recording with the screen locked (the app declares background audio).
@@ -44,6 +48,14 @@ final class MicCapture: @unchecked Sendable {
     private func installTapAndStart() throws {
         let input = engine.inputNode
         input.removeTap(onBus: 0)
+        #if os(macOS)
+        // Use the microphone chosen in Settings, if it's connected.
+        if let device = MicDevices.deviceID(forUID: AppSettings.microphoneDeviceUID), let unit = input.audioUnit {
+            var id = device
+            AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                 &id, UInt32(MemoryLayout<AudioDeviceID>.size))
+        }
+        #endif
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { throw SpeechError.noMicrophone }
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
@@ -86,3 +98,83 @@ final class MicCapture: @unchecked Sendable {
         #endif
     }
 }
+
+#if os(macOS)
+/// The Mac's microphones, for the picker in Settings.
+enum MicDevices {
+    struct Device: Identifiable, Hashable {
+        let uid: String
+        let name: String
+        var id: String { uid }
+    }
+
+    static func all() -> [Device] {
+        deviceIDs().compactMap { id -> Device? in
+            guard hasInput(id), !isHidden(id),
+                  let uid: CFString = read(id, kAudioDevicePropertyDeviceUID),
+                  let name: CFString = read(id, kAudioObjectPropertyName)
+            else { return nil }
+            let text = name as String
+            guard !text.hasPrefix("Sintr call audio") else { return nil }
+            return Device(uid: uid as String, name: text)
+        }
+    }
+
+    static func deviceID(forUID uid: String) -> AudioDeviceID? {
+        guard !uid.isEmpty else { return nil }
+        return deviceIDs().first { id in
+            let value: CFString? = read(id, kAudioDevicePropertyDeviceUID)
+            return (value as String?) == uid
+        }
+    }
+
+    static func name(forUID uid: String) -> String? {
+        all().first { $0.uid == uid }?.name
+    }
+
+    private static func deviceIDs() -> [AudioDeviceID] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr
+        else { return [] }
+        var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &ids) == noErr
+        else { return [] }
+        return ids
+    }
+
+    private static func hasInput(_ id: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        return AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr && size > 0
+    }
+
+    private static func isHidden(_ id: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyIsHidden,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var hidden: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        return AudioObjectGetPropertyData(id, &address, 0, nil, &size, &hidden) == noErr && hidden != 0
+    }
+
+    private static func read(_ id: AudioDeviceID, _ selector: AudioObjectPropertySelector) -> CFString? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var value: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let status = AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value)
+        guard status == noErr, let value else { return nil }
+        return value.takeRetainedValue()
+    }
+}
+#endif

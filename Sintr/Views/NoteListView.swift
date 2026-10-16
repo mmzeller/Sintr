@@ -85,6 +85,14 @@ struct NoteListView: View {
                     Label("New note", systemImage: "square.and.pencil")
                 }
             }
+            #if os(macOS)
+            ToolbarItem(placement: .secondaryAction) {
+                SettingsLink {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                .help("Settings — meeting audio, speakers, templates, models")
+            }
+            #endif
             ToolbarItem(placement: .secondaryAction) {
                 Menu {
                     Button("Import files…", systemImage: "square.and.arrow.down") { appState.showImporter = true }

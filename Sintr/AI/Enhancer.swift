@@ -1,66 +1,5 @@
 import Foundation
 
-/// The shape of the cleaned-up notes, like Granola's templates.
-enum EnhanceStyle: String, CaseIterable, Identifiable {
-    case meeting, oneOnOne, interview, lecture, actionItems
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .meeting: "Meeting"
-        case .oneOnOne: "1:1 / check-in"
-        case .interview: "Interview"
-        case .lecture: "Lecture or training"
-        case .actionItems: "Just action items"
-        }
-    }
-
-    var layout: String {
-        switch self {
-        case .meeting:
-            """
-            ## Summary
-            Two or three sentences.
-            ## Notes
-            Organized under the person's own headings or topics, in their order.
-            ## Decisions
-            ## Action items
-            - [ ] Task — owner, due date if mentioned
-            """
-        case .oneOnOne:
-            """
-            ## Summary
-            ## What we talked about
-            ## Follow-ups
-            - [ ] Task — owner
-            """
-        case .interview:
-            """
-            ## Summary
-            ## Key answers
-            ## Strengths
-            ## Concerns or open questions
-            ## Next steps
-            """
-        case .lecture:
-            """
-            ## Summary
-            ## Key ideas
-            ## Details and examples
-            ## Questions to review
-            """
-        case .actionItems:
-            """
-            ## Decisions
-            ## Action items
-            - [ ] Task — owner, due date if mentioned
-            Nothing else.
-            """
-        }
-    }
-}
-
 /// Anything that can turn a prompt into text: Apple's on-device model, the downloaded phone
 /// model, or Claude.
 protocol TextGenerator: Sendable {
@@ -85,18 +24,19 @@ enum Enhancer {
         Never invent names, numbers, dates or decisions that aren't in the notes or transcript. \
         If something in the transcript is unclear, say so instead of guessing.
         "Me" in the transcript is the person whose notes these are; "Them" is everyone else on the call.
+        Speaker names in the transcript ("Me", "Them", "Speaker 1" or real names) tell you who said what.
         Write Markdown with short headings and bullet points. No introduction or sign-off.
         """
 
     /// Everything that would be sent, as one block of text (used for "Share to another app"
     /// and for showing what Claude will receive).
-    static func fullPrompt(for note: Note, style: EnhanceStyle) -> String {
-        finalPrompt(note: note, style: style, transcriptPart: note.transcriptLines(), isCondensed: false)
+    static func fullPrompt(for note: Note, template: NoteTemplate) -> String {
+        finalPrompt(note: note, template: template, transcriptPart: note.transcriptLines(), isCondensed: false)
     }
 
     static func run(
         note: Note,
-        style: EnhanceStyle,
+        template: NoteTemplate,
         generator: some TextGenerator,
         progress: @escaping @Sendable (EnhanceProgress) -> Void
     ) async throws -> String {
@@ -108,7 +48,7 @@ enum Enhancer {
         // Short enough: one request.
         if transcript.count + note.myNotes.count <= generator.chunkCharacters {
             progress(EnhanceProgress(step: 1, steps: 1, message: "Writing your notes…"))
-            let prompt = finalPrompt(note: note, style: style, transcriptPart: transcript, isCondensed: false)
+            let prompt = finalPrompt(note: note, template: template, transcriptPart: transcript, isCondensed: false)
             return clean(try await generator.generate(instructions: instructions, prompt: prompt, maxTokens: 1500))
         }
 
@@ -143,22 +83,22 @@ enum Enhancer {
             if combined.count + note.myNotes.count <= generator.chunkCharacters || parts.count == 1 || round >= 4 {
                 try Task.checkCancellation()
                 progress(EnhanceProgress(step: parts.count + 1, steps: parts.count + 1, message: "Writing your notes…"))
-                let prompt = finalPrompt(note: note, style: style, transcriptPart: combined, isCondensed: true)
+                let prompt = finalPrompt(note: note, template: template, transcriptPart: combined, isCondensed: true)
                 return clean(try await generator.generate(instructions: instructions, prompt: prompt, maxTokens: 1500))
             }
             parts = split(combined, size: generator.chunkCharacters)
         }
     }
 
-    private static func finalPrompt(note: Note, style: EnhanceStyle, transcriptPart: String, isCondensed: Bool) -> String {
+    private static func finalPrompt(note: Note, template: NoteTemplate, transcriptPart: String, isCondensed: Bool) -> String {
         let myNotes = note.myNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         let date = note.created.formatted(date: .complete, time: .shortened)
         return """
             Title: \(note.displayTitle)
             Date: \(date)
-
+            \(glossaryLine)
             Use this layout:
-            \(style.layout)
+            \(template.instructions)
 
             MY NOTES:
             \(myNotes.isEmpty ? "(none — work from the transcript)" : myNotes)
@@ -166,6 +106,17 @@ enum Enhancer {
             \(isCondensed ? "KEY POINTS FROM THE TRANSCRIPT (condensed in order)" : "TRANSCRIPT"):
             \(transcriptPart.isEmpty ? "(no transcript)" : transcriptPart)
             """
+    }
+
+    /// The names-and-terms list from Settings, as a line for prompts (empty if there's none).
+    static var glossaryLine: String {
+        let glossary = AppSettings.glossaryText
+        guard !glossary.isEmpty else { return "" }
+        let terms = glossary.split(whereSeparator: { $0 == "\n" || $0 == "," })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+        return "Names and terms that may come up (spell them exactly like this, and fix transcript mistakes that sound like them): \(terms)\n"
     }
 
     /// Splits text into pieces of about `size` characters, at line breaks where possible.

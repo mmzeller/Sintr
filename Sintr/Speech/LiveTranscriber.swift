@@ -90,8 +90,53 @@ final class LiveTranscriber: @unchecked Sendable {
     }
 }
 
+/// One recognized word (or word piece) and when it was said, in seconds from the start of the file.
+struct TimedWord: Sendable {
+    var start: Double
+    var end: Double
+    /// Includes any leading space, so words can be joined back together as-is.
+    var text: String
+}
+
 /// Transcribes a saved audio file (a recording, or one you imported).
 enum FileTranscriber {
+    /// Transcribes with a time for every word — used to work out who said what.
+    static func words(
+        url: URL,
+        locale: Locale,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> [TimedWord] {
+        let transcriber = SpeechTranscriber(
+            locale: locale, transcriptionOptions: [], reportingOptions: [], attributeOptions: [.audioTimeRange])
+        let analyzer = SpeechAnalyzer(modules: [transcriber])
+        let file = try AVAudioFile(forReading: url)
+        let length = Double(file.length) / file.processingFormat.sampleRate
+        try await analyzer.start(inputAudioFile: file, finishAfterFile: true)
+
+        var words: [TimedWord] = []
+        for try await result in transcriber.results {
+            try Task.checkCancellation()
+            let text = result.text
+            for run in text.runs {
+                let piece = String(text[run.range].characters)
+                guard !piece.isEmpty else { continue }
+                if let range = run.audioTimeRange, range.start.seconds.isFinite, range.end.seconds.isFinite {
+                    words.append(TimedWord(start: range.start.seconds, end: range.end.seconds, text: piece))
+                } else if !words.isEmpty {
+                    words[words.count - 1].text += piece  // punctuation and spacing without a time
+                }
+            }
+            // Keep a space between consecutive results.
+            if let last = words.last, !last.text.hasSuffix(" ") { words[words.count - 1].text += " " }
+            if length > 0 {
+                let done = result.resultsFinalizationTime.seconds / length
+                if done.isFinite { progress(min(max(done, 0), 1)) }
+            }
+        }
+        progress(1)
+        return words
+    }
+
     static func transcribe(
         url: URL,
         locale: Locale,

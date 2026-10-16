@@ -14,7 +14,12 @@ final class AudioPipe: @unchecked Sendable {
     private let lock = NSLock()
     private var _level: Float = 0
     private var _seconds: Double = 0
+    private var _heardSound = false
     private var finished = false
+    /// When this pipe started, on the system clock. Used to fill gaps (e.g. while the call app
+    /// hasn't started playing yet, or while a device reconnects) with silence, so the two sides
+    /// of a call stay lined up in time.
+    private let startUptime = ProcessInfo.processInfo.systemUptime
 
     init(transcriber: LiveTranscriber, saveTo url: URL?) {
         self.transcriber = transcriber
@@ -29,6 +34,9 @@ final class AudioPipe: @unchecked Sendable {
     var level: Float { lock.withLock { _level } }
     /// Seconds of audio received so far.
     var seconds: Double { lock.withLock { _seconds } }
+    /// Anything other than digital silence has come through (a muted or broken
+    /// microphone delivers only zeros).
+    var heardSound: Bool { lock.withLock { _heardSound } }
 
     /// Called on the audio thread for every captured buffer.
     func process(_ buffer: AVAudioPCMBuffer) {
@@ -37,6 +45,8 @@ final class AudioPipe: @unchecked Sendable {
         guard !finished, buffer.frameLength > 0 else { return }
 
         _level = max(Self.rms(buffer), _level * 0.8)
+        if !_heardSound, Self.hasSound(buffer) { _heardSound = true }
+        fillGapIfNeeded()
 
         if converter == nil || converter?.inputFormat != buffer.format {
             converter = AVAudioConverter(from: buffer.format, to: target)
@@ -61,6 +71,11 @@ final class AudioPipe: @unchecked Sendable {
         }
         guard status != .error, error == nil, output.frameLength > 0 else { return }
 
+        write(output)
+    }
+
+    /// Sends converted audio to the transcriber and the file. Call with the lock held.
+    private func write(_ output: AVAudioPCMBuffer) {
         _seconds += Double(output.frameLength) / target.sampleRate
         transcriber.feed(output)
         if let file {
@@ -70,6 +85,25 @@ final class AudioPipe: @unchecked Sendable {
                 // Stop trying to save rather than failing on every buffer; transcription carries on.
                 self.file = nil
             }
+        }
+    }
+
+    /// If audio stopped arriving for a while, add that much silence first. Call with the lock held.
+    private func fillGapIfNeeded() {
+        let missing = (ProcessInfo.processInfo.systemUptime - startUptime) - _seconds
+        guard missing > 0.6 else { return }
+        var remaining = AVAudioFrameCount((missing - 0.1) * target.sampleRate)
+        let chunk = AVAudioFrameCount(target.sampleRate * 10)
+        while remaining > 0 {
+            let frames = min(remaining, chunk)
+            guard let silence = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: frames) else { return }
+            silence.frameLength = frames
+            let buffers = UnsafeMutableAudioBufferListPointer(silence.mutableAudioBufferList)
+            for buffer in buffers {
+                if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
+            }
+            write(silence)
+            remaining -= frames
         }
     }
 
@@ -101,6 +135,16 @@ final class AudioPipe: @unchecked Sendable {
         return try? AVAudioFile(
             forWriting: cafURL, settings: format.settings,
             commonFormat: format.commonFormat, interleaved: format.isInterleaved)
+    }
+
+    private static func hasSound(_ buffer: AVAudioPCMBuffer) -> Bool {
+        let frames = Int(buffer.frameLength) * (buffer.format.isInterleaved ? Int(buffer.format.channelCount) : 1)
+        if let data = buffer.floatChannelData {
+            for i in stride(from: 0, to: frames, by: 3) where data[0][i] != 0 { return true }
+        } else if let data = buffer.int16ChannelData {
+            for i in stride(from: 0, to: frames, by: 3) where data[0][i] != 0 { return true }
+        }
+        return false
     }
 
     private static func rms(_ buffer: AVAudioPCMBuffer) -> Float {

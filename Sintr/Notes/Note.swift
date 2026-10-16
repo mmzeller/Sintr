@@ -48,6 +48,47 @@ struct NoteRecording: Codable, Hashable, Sendable {
     }
 }
 
+/// A translation of part of a note.
+struct NoteTranslation: Codable, Identifiable, Hashable, Sendable {
+    var id = UUID()
+    /// BCP-47 code of the target language, e.g. "es".
+    var language: String
+    /// Which part was translated: "enhanced", "transcript" or "myNotes".
+    var part: String
+    var text: String
+    var by: String
+    var created = Date()
+
+    init(language: String, part: String, text: String, by: String) {
+        self.language = language
+        self.part = part
+        self.text = text
+        self.by = by
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        language = try c.decodeIfPresent(String.self, forKey: .language) ?? ""
+        part = try c.decodeIfPresent(String.self, forKey: .part) ?? "enhanced"
+        text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        by = try c.decodeIfPresent(String.self, forKey: .by) ?? ""
+        created = try c.decodeIfPresent(Date.self, forKey: .created) ?? Date()
+    }
+
+    var languageName: String {
+        Locale.current.localizedString(forIdentifier: language) ?? language
+    }
+
+    var partName: String {
+        switch part {
+        case "transcript": "Transcript"
+        case "myNotes": "My notes"
+        default: "Enhanced notes"
+        }
+    }
+}
+
 struct Note: Codable, Identifiable, Hashable, Sendable {
     var id = UUID()
     var title = ""
@@ -64,8 +105,27 @@ struct Note: Codable, Identifiable, Hashable, Sendable {
     /// Total recorded time in seconds.
     var duration: Double = 0
     var recordings: [NoteRecording] = []
+    /// Names you've given speakers, e.g. "Speaker 1" → "Dana".
+    var speakerNames: [String: String] = [:]
+    var translations: [NoteTranslation] = []
+    /// Voice fingerprints for detected speakers, so the same voice keeps its label when you
+    /// record more into this note.
+    var voicePrints: [String: [Float]] = [:]
 
     init() {}
+
+    /// The name to show for a speaker label.
+    func displayName(forSpeaker label: String) -> String {
+        let name = speakerNames[label]?.trimmingCharacters(in: .whitespaces) ?? ""
+        return name.isEmpty ? label : name
+    }
+
+    /// Speaker labels in the order they first speak.
+    var speakers: [String] {
+        transcript.reduce(into: [String]()) { list, segment in
+            if !segment.speaker.isEmpty, !list.contains(segment.speaker) { list.append(segment.speaker) }
+        }
+    }
 
     var displayTitle: String {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -81,14 +141,15 @@ struct Note: Codable, Identifiable, Hashable, Sendable {
         transcript.map { segment in
             var line = ""
             if includeTimes { line += "[\(Self.clock(segment.start))] " }
-            if !segment.speaker.isEmpty { line += "\(segment.speaker): " }
+            if !segment.speaker.isEmpty { line += "\(displayName(forSpeaker: segment.speaker)): " }
             return line + segment.text
         }.joined(separator: "\n")
     }
 
     /// Text used for search.
     var searchableText: String {
-        [title, myNotes, enhanced, transcriptText].joined(separator: "\n")
+        ([title, myNotes, enhanced, transcriptText] + Array(speakerNames.values) + translations.map(\.text))
+            .joined(separator: "\n")
     }
 
     var preview: String {
@@ -130,6 +191,9 @@ struct Note: Codable, Identifiable, Hashable, Sendable {
         enhancedAt = try c.decodeIfPresent(Date.self, forKey: .enhancedAt)
         duration = try c.decodeIfPresent(Double.self, forKey: .duration) ?? 0
         recordings = try c.decodeIfPresent([NoteRecording].self, forKey: .recordings) ?? []
+        speakerNames = try c.decodeIfPresent([String: String].self, forKey: .speakerNames) ?? [:]
+        translations = try c.decodeIfPresent([NoteTranslation].self, forKey: .translations) ?? []
+        voicePrints = try c.decodeIfPresent([String: [Float]].self, forKey: .voicePrints) ?? [:]
     }
 }
 

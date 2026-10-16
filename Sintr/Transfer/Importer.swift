@@ -97,12 +97,16 @@ final class Importer {
             note.duration = length
             if let date = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate { note.created = date }
         }
-        status = "Transcribing \(url.lastPathComponent) on this \(Platform.deviceName)…"
-        let pieces = try await FileTranscriber.transcribe(url: destination, locale: locale) { value in
-            Task { @MainActor [weak self] in self?.progress = value }
+        let detect = AppSettings.shouldDetectSpeakers && SpeakerDetector.isInstalled
+        try await SpeakerPass.run(noteID: note.id, store: store, detectSpeakers: detect) { update in
+            Task { @MainActor [weak self] in
+                self?.status = "\(url.lastPathComponent): \(update.message)"
+                self?.progress = update.fraction
+            }
         }
-        store.edit(note.id) { note in
-            note.transcript = pieces.map { TranscriptSegment(speaker: "", start: $0.start, text: $0.text) }
+        if !AppSettings.shouldKeepRecordings {
+            try? FileManager.default.removeItem(at: destination)
+            store.edit(note.id) { $0.recordings = [] }
         }
         return "\(url.lastPathComponent): transcribed (\(Note.durationText(length)))."
     }
@@ -128,9 +132,9 @@ final class Importer {
         }
     }
 
-    /// Re-runs transcription over a note's saved recordings (e.g. if live transcription
-    /// stalled while the phone was locked). Replaces the note's transcript.
-    func retranscribe(_ noteID: UUID, store: NoteStore) async {
+    /// Rebuilds a note's transcript from its saved audio — with speaker labels when
+    /// `detectSpeakers` is on (and the speaker pack is downloaded).
+    func rebuildTranscript(_ noteID: UUID, store: NoteStore, detectSpeakers: Bool) async {
         guard let note = store.note(noteID), !note.recordings.isEmpty else { return }
         isWorking = true
         defer {
@@ -139,25 +143,17 @@ final class Importer {
             progress = 0
         }
         do {
-            guard let locale = await SpeechSupport.resolvedLocale() else { throw SpeechError.languageNotSupported }
-            guard await SpeechSupport.isInstalled(locale) else { throw ImportError.needsSpeechModel }
-            var segments: [TranscriptSegment] = []
-            for (index, recording) in note.recordings.enumerated() {
-                status = "Transcribing recording \(index + 1) of \(note.recordings.count)…"
-                let pieces = try await FileTranscriber.transcribe(
-                    url: store.recordingURL(recording.fileName), locale: locale
-                ) { value in
-                    Task { @MainActor [weak self] in self?.progress = value }
-                }
-                segments += pieces.map {
-                    TranscriptSegment(speaker: recording.speaker, start: recording.offset + $0.start, text: $0.text)
+            try await SpeakerPass.run(noteID: noteID, store: store, detectSpeakers: detectSpeakers) { update in
+                Task { @MainActor [weak self] in
+                    self?.status = update.message
+                    self?.progress = update.fraction
                 }
             }
-            store.edit(noteID) { $0.transcript = segments.sorted { $0.start < $1.start } }
-            store.saveNow()
-            summary = "Transcript rebuilt from the recording."
+            summary = detectSpeakers && SpeakerDetector.isInstalled
+                ? "Transcript rebuilt with speaker labels. Click a speaker's name to rename them."
+                : "Transcript rebuilt from the recording."
         } catch {
-            summary = "Couldn't re-transcribe: \(error.localizedDescription)"
+            summary = "Couldn't rebuild the transcript: \(error.localizedDescription)"
         }
     }
 

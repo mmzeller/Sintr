@@ -8,7 +8,8 @@ struct EnhanceSheet: View {
     @Environment(NoteStore.self) private var store
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
-    @AppStorage(AppSettings.enhanceStyle) private var styleRaw = EnhanceStyle.meeting.rawValue
+    @Environment(TemplateStore.self) private var templates
+    @AppStorage(AppSettings.template) private var templateID = NoteTemplate.defaultID
     @AppStorage(AppSettings.phoneModel) private var phoneModelRaw = PhoneModelChoice.defaultChoice.rawValue
     @AppStorage(AppSettings.claudeModel) private var claudeModel = AppSettings.defaultClaudeModel
     @State private var task: Task<Void, Never>?
@@ -17,7 +18,7 @@ struct EnhanceSheet: View {
     @State private var confirmClaude = false
 
     private var note: Note { store.note(noteID) ?? Note() }
-    private var style: EnhanceStyle { EnhanceStyle(rawValue: styleRaw) ?? .meeting }
+    private var template: NoteTemplate { templates.template(templateID) }
     private var phoneModel: PhoneModelChoice { PhoneModelChoice(rawValue: phoneModelRaw) ?? .defaultChoice }
     private var isRunning: Bool { task != nil }
     private var claudeKey: String? { APIKeyStore.claudeKey }
@@ -26,9 +27,9 @@ struct EnhanceSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("Layout", selection: $styleRaw) {
-                        ForEach(EnhanceStyle.allCases) { style in
-                            Text(style.title).tag(style.rawValue)
+                    Picker("Template", selection: $templateID) {
+                        ForEach(templates.templates) { template in
+                            Text(template.name).tag(template.id)
                         }
                     }
                 } footer: {
@@ -178,7 +179,7 @@ struct EnhanceSheet: View {
     }
 
     private var shareText: String {
-        Enhancer.instructions + "\n\n" + Enhancer.fullPrompt(for: note, style: style)
+        Enhancer.instructions + "\n\n" + Enhancer.fullPrompt(for: note, template: template)
     }
 
     private func optionRow(
@@ -216,12 +217,12 @@ struct EnhanceSheet: View {
     private func run(_ generator: some TextGenerator) {
         errorText = nil
         let note = self.note
-        let style = self.style
+        let template = self.template
         let name = generator.name
         progress = EnhanceProgress(step: 1, steps: 1, message: "Starting…")
         task = Task {
             do {
-                let text = try await Enhancer.run(note: note, style: style, generator: generator) { update in
+                let text = try await Enhancer.run(note: note, template: template, generator: generator) { update in
                     Task { @MainActor in progress = update }
                 }
                 store.edit(noteID) { note in

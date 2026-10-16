@@ -55,6 +55,12 @@ struct ContentView: View {
         )) { item in
             EnhanceSheet(noteID: item.id)
         }
+        .sheet(item: Binding(
+            get: { appState.translateNoteID.map(IdentifiedID.init) },
+            set: { appState.translateNoteID = $0?.id }
+        )) { item in
+            TranslateSheet(noteID: item.id)
+        }
         .overlay(alignment: .bottom) {
             if importer.isWorking {
                 ImportProgressBanner()
@@ -77,6 +83,15 @@ struct ContentView: View {
             Button("Not now", role: .cancel) { recorder.pendingModelDownload = nil }
         } message: {
             Text("Transcription runs entirely on this \(Platform.deviceName), using a speech model Apple provides. It needs a one-time download from Apple for \(recorder.pendingModelDownload.map(SpeechSupport.displayName) ?? "your language"). Your audio and notes are never uploaded.")
+        }
+        .alert("Download speaker detection?", isPresented: Binding(
+            get: { recorder.pendingSpeakerDownload },
+            set: { if !$0 { recorder.pendingSpeakerDownload = false } }
+        )) {
+            Button("Download") { Task { await recorder.answerSpeakerDownload(download: true) } }
+            Button("Not now") { Task { await recorder.answerSpeakerDownload(download: false) } }
+        } message: {
+            Text("“Detect speakers” is on. Telling voices apart runs on this \(Platform.deviceName) with open models — about 30 MB, downloaded once from Hugging Face. Your audio is never uploaded. (You can turn it off next to the Record button.)")
         }
         .alert("Recording problem", isPresented: Binding(
             get: { recorder.errorMessage != nil },

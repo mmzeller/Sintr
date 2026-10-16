@@ -47,11 +47,15 @@ enum Exporter {
         if !mine.isEmpty {
             out += "\n## My notes\n\n\(mine)\n"
         }
+        for translation in note.translations.sorted(by: { $0.created < $1.created }) {
+            out += "\n## \(translation.partName) in \(translation.languageName)\n\n"
+            out += shiftHeadings(translation.text) + "\n"
+        }
         if !note.transcript.isEmpty {
             out += "\n## Transcript\n\n"
             for segment in note.transcript {
                 var line = "**[\(Note.clock(segment.start))]"
-                if !segment.speaker.isEmpty { line += " \(segment.speaker):" }
+                if !segment.speaker.isEmpty { line += " \(note.displayName(forSpeaker: segment.speaker)):" }
                 out += line + "** \(segment.text)\n\n"
             }
         }
@@ -67,6 +71,9 @@ enum Exporter {
         }
         let mine = note.myNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         if !mine.isEmpty { out += "\nMY NOTES\n\n\(mine)\n" }
+        for translation in note.translations.sorted(by: { $0.created < $1.created }) {
+            out += "\n\(translation.partName.uppercased()) IN \(translation.languageName.uppercased())\n\n\(translation.text)\n"
+        }
         if !note.transcript.isEmpty { out += "\nTRANSCRIPT\n\n\(note.transcriptLines())\n" }
         return out
     }

@@ -104,6 +104,10 @@ jobs:
           ls -la "$P" "$P/Sintr Data"
           lipo -archs "$P/Sintr.app/Contents/MacOS/Sintr"
           codesign --verify --deep --strict --verbose=2 "$P/Sintr.app"
+          for KEY in NSMicrophoneUsageDescription NSAudioCaptureUsageDescription NSSpeechRecognitionUsageDescription; do
+            /usr/libexec/PlistBuddy -c "Print :$KEY" "$P/Sintr.app/Contents/Info.plist" >/dev/null || { echo "::error::Info.plist is missing $KEY"; exit 1; }
+          done
+          du -sh "$P/Sintr.app"
           bash scripts/ci-storage-check.sh "$P/Sintr.app" "Portable from a folder"
           OUT=$(cat "$RUNNER_TEMP/last-check.txt")
           grep -qxF "root=$P/Sintr Data" <<<"$OUT"

@@ -5,10 +5,14 @@ import AppKit
 
 struct SettingsView: View {
     @Environment(NoteStore.self) private var store
+    @Environment(TemplateStore.self) private var templates
     @AppStorage(AppSettings.language) private var language = ""
     @AppStorage(AppSettings.keepRecordings) private var keepRecordings = true
     @AppStorage(AppSettings.includeInBackups) private var includeInBackups = false
-    @AppStorage(AppSettings.captureCallAudio) private var captureCallAudio = true
+    @AppStorage(AppSettings.meetingAudio) private var meetingRaw = MeetingAudio.allAudio.rawValue
+    @AppStorage(AppSettings.microphoneUID) private var microphoneUID = ""
+    @AppStorage(AppSettings.detectSpeakers) private var detectSpeakers = true
+    @AppStorage(AppSettings.glossary) private var glossary = ""
     @AppStorage(AppSettings.claudeModel) private var claudeModel = AppSettings.defaultClaudeModel
     @AppStorage(AppSettings.phoneModel) private var phoneModelRaw = PhoneModelChoice.defaultChoice.rawValue
 
@@ -26,6 +30,13 @@ struct SettingsView: View {
     @State private var phoneError: String?
     @State private var phoneSizes: [String: Int64] = [:]
     @State private var refresh = 0
+    @State private var speakerDownload: Double?
+    @State private var speakerError: String?
+    @State private var editingTemplate: NoteTemplate?
+    #if os(macOS)
+    @State private var permission = SystemAudioPermission.status
+    @State private var microphones: [MicDevices.Device] = []
+    #endif
 
     private var phoneModel: PhoneModelChoice { PhoneModelChoice(rawValue: phoneModelRaw) ?? .defaultChoice }
 
@@ -35,15 +46,28 @@ struct SettingsView: View {
             #if os(macOS)
             storageSection
             #endif
-            transcriptionSection
             recordingSection
+            transcriptionSection
+            speakersSection
+            templatesSection
+            glossarySection
             phoneModelSection
             claudeSection
             aboutSection
         }
         .formStyle(.grouped)
         .navigationTitle("Settings")
+        .sheet(item: $editingTemplate) { template in
+            TemplateEditor(template: template)
+        }
         .task { await loadSpeechInfo() }
+        #if os(macOS)
+        .onAppear { microphones = MicDevices.all() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            permission = SystemAudioPermission.status
+            microphones = MicDevices.all()
+        }
+        #endif
         .onChange(of: language) { Task { await loadSpeechInfo() } }
         .onChange(of: includeInBackups) { store.applyBackupSetting() }
     }
@@ -94,7 +118,7 @@ struct SettingsView: View {
     private var transcriptionSection: some View {
         Section {
             Picker("Language", selection: $language) {
-                Text("Same as this \(Platform.deviceName)").tag("")
+                Text("Automatic (this \(Platform.deviceName)'s language)").tag("")
                 ForEach(locales, id: \.identifier) { locale in
                     Text(SpeechSupport.displayName(locale)).tag(locale.identifier)
                 }
@@ -128,9 +152,34 @@ struct SettingsView: View {
     private var recordingSection: some View {
         Section {
             #if os(macOS)
-            Toggle("Also record call audio (“Them”)", isOn: $captureCallAudio)
+            LabeledContent("Meeting audio") {
+                MeetingAudioPicker(selection: $meetingRaw, showsLabel: false)
+            }
+            if (MeetingAudio(rawValue: meetingRaw) ?? .allAudio).isOn {
+                LabeledContent("Permission to hear calls") {
+                    if permission == .allowed {
+                        Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    } else {
+                        Button("Allow…") {
+                            Task {
+                                _ = await SystemAudioPermission.request()
+                                permission = SystemAudioPermission.status
+                            }
+                        }
+                    }
+                }
+            }
+            Picker("Microphone", selection: $microphoneUID) {
+                Text("System default").tag("")
+                ForEach(microphones) { mic in
+                    Text(mic.name).tag(mic.uid)
+                }
+                if !microphoneUID.isEmpty && !microphones.contains(where: { $0.uid == microphoneUID }) {
+                    Text("Not connected").tag(microphoneUID)
+                }
+            }
             #endif
-            Toggle("Keep audio recordings", isOn: $keepRecordings)
+            Toggle("Save audio with notes", isOn: $keepRecordings)
             #if os(iOS)
             Toggle("Include notes in iPhone backups", isOn: $includeInBackups)
             #endif
@@ -141,13 +190,78 @@ struct SettingsView: View {
         } footer: {
             VStack(alignment: .leading, spacing: 6) {
                 #if os(macOS)
-                Text("Call audio is everything your Mac plays — the other side of Zoom, Teams, FaceTime or a browser call. The first time, macOS asks to allow Sintr to record system audio. If “Them” stays empty, check System Settings → Privacy & Security → Screen & System Audio Recording.")
+                Text("Meeting audio is what Sintr records besides your microphone. “All Mac audio” hears the other side of FaceTime, Teams, Zoom, Webex, Slack, WhatsApp or a call in your browser, and labels it “Them”. Pick one app to leave out other sounds (music, notifications). Off is for in-person meetings and voice notes.")
+                Text("macOS gives Sintr silence instead of the call until you allow it: \(SystemAudioPermission.settingsPath). Wear headphones if you can — otherwise the microphone also hears the call from your speakers (Sintr removes most of those duplicates).")
                 #endif
-                Text("Kept recordings let you re-transcribe a note later or export the audio. About 15–30 MB per hour.")
+                Text("Saved audio lets you rebuild a transcript, detect speakers later, or export the recording. About 15–30 MB per hour.")
                 #if os(iOS)
                 Text("Backups are off by default so notes never go to iCloud. With this off, export a Sintr backup now and then so you have a copy.")
                 #endif
             }
+        }
+    }
+
+    private var speakersSection: some View {
+        Section {
+            Toggle("Detect speakers after recording", isOn: $detectSpeakers)
+            LabeledContent("Speaker detection pack") {
+                if !SpeakerDetector.isAvailable {
+                    Text("Not in this build").foregroundStyle(.secondary)
+                } else if let speakerDownload {
+                    ProgressView(value: speakerDownload).frame(width: 120)
+                } else if SpeakerDetector.isInstalled {
+                    HStack {
+                        Text(ByteCountFormatter.string(fromByteCount: SpeakerDetector.sizeOnDisk, countStyle: .file))
+                            .foregroundStyle(.secondary)
+                        Button("Delete", role: .destructive) {
+                            SpeakerDetector.delete()
+                            refresh += 1
+                        }
+                    }
+                } else {
+                    Button("Download") { downloadSpeakerPack() }
+                }
+            }
+            .id(refresh)
+            if let speakerError {
+                Text(speakerError).foregroundStyle(.red).font(.footnote)
+            }
+        } header: {
+            Text("Speakers")
+        } footer: {
+            Text("On calls, your microphone is “Me” and the call is “Them” (or Them 1, Them 2… when several people talk). In person, voices are labeled Speaker 1, Speaker 2… Click a speaker's name in a transcript to rename them. Runs on this \(Platform.deviceName) with open models (about 30 MB, one time) from Hugging Face; your audio is never uploaded.")
+        }
+    }
+
+    private var templatesSection: some View {
+        Section {
+            ForEach(templates.templates) { template in
+                HStack {
+                    Text(template.name)
+                    Spacer()
+                    Button("Edit") { editingTemplate = template }
+                        .buttonStyle(.borderless)
+                }
+            }
+            Button("Add a template", systemImage: "plus") {
+                editingTemplate = templates.add()
+            }
+        } header: {
+            Text("Templates")
+        } footer: {
+            Text("Templates decide how Enhance lays out your notes. Edit the built-in ones or add your own.")
+        }
+    }
+
+    private var glossarySection: some View {
+        Section {
+            TextEditor(text: $glossary)
+                .frame(minHeight: 70)
+                .font(.body)
+        } header: {
+            Text("Names and terms")
+        } footer: {
+            Text("People, places, products and jargon that come up in your meetings, one per line or separated by commas — for example “Q-SYS, Epiphan Pearl, NinjaOne”. Enhance and Translate use them to spell names correctly and fix transcript mistakes. (Apple's speech model doesn't accept custom words, so the transcript itself may still mishear them.)")
         }
     }
 
@@ -264,6 +378,22 @@ struct SettingsView: View {
             speechError = "Download failed: \(error.localizedDescription)"
         }
         speechDownload = nil
+    }
+
+    private func downloadSpeakerPack() {
+        speakerError = nil
+        speakerDownload = 0
+        Task {
+            do {
+                try await SpeakerDetector.download { value in
+                    Task { @MainActor in speakerDownload = value }
+                }
+            } catch {
+                speakerError = "Download failed: \(error.localizedDescription)"
+            }
+            speakerDownload = nil
+            refresh += 1
+        }
     }
 
     private func downloadPhoneModel() {
