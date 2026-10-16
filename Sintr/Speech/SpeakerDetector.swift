@@ -12,7 +12,7 @@ struct VoiceTurn: Sendable {
 
 /// Works out who spoke when ("speaker diarization"), entirely on the device, using the open
 /// FluidAudio models (pyannote segmentation + WeSpeaker voice fingerprints).
-/// The models (about 30 MB) are downloaded once from Hugging Face, only when you ask.
+/// The models (a few dozen MB) are downloaded once from Hugging Face, only when you ask.
 enum SpeakerDetector {
     static var modelsFolder: URL {
         let folder = Storage.root.appendingPathComponent("Models/SpeakerDetection", isDirectory: true)

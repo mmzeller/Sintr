@@ -28,4 +28,4 @@ if [ -n "$TEAM" ]; then
   sed -i '' "s/DEVELOPMENT_TEAM = \"\";/DEVELOPMENT_TEAM = $TEAM;/g" "$PROJECT"
   echo "Kept your signing team ($TEAM)."
 fi
-printf "\n\033[1m%s\033[0m\n" "Updated. In Xcode, press Run (▶) to install the new version."
+printf "\n\033[1m%s\033[0m\n" "Updated. Now rebuild: run make-portable.sh (portable version) or install-mac.sh, or press Run (▶) in Xcode."

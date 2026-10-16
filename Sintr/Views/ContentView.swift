@@ -91,7 +91,7 @@ struct ContentView: View {
             Button("Download") { Task { await recorder.answerSpeakerDownload(download: true) } }
             Button("Not now") { Task { await recorder.answerSpeakerDownload(download: false) } }
         } message: {
-            Text("“Detect speakers” is on. Telling voices apart runs on this \(Platform.deviceName) with open models — about 30 MB, downloaded once from Hugging Face. Your audio is never uploaded. (You can turn it off next to the Record button.)")
+            Text("“Detect speakers” is on. Telling voices apart runs on this \(Platform.deviceName) with open models — a few dozen MB, downloaded once from Hugging Face. Your audio is never uploaded. (You can turn it off next to the Record button.)")
         }
         .alert("Recording problem", isPresented: Binding(
             get: { recorder.errorMessage != nil },

@@ -76,7 +76,7 @@ struct TranscriptView: View {
             Button("Download") { downloadThenIdentify() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Telling voices apart runs on this \(Platform.deviceName) with open models (about 30 MB, one time) from Hugging Face. Your audio is never uploaded.")
+            Text("Telling voices apart runs on this \(Platform.deviceName) with open models (a one-time download of a few dozen MB) from Hugging Face. Your audio is never uploaded.")
         }
     }
 

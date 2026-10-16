@@ -3,9 +3,14 @@
 Private meeting notes for iPhone and Mac, in the spirit of Granola — but everything happens on your own device.
 
 - **Type your own notes while Sintr listens.** It writes a live transcript as people talk.
-- **On the Mac it hears both sides of a call** — your microphone (“Me”) and whatever the Mac plays, like the other side of Zoom, Teams or FaceTime (“Them”). No bot joins the call.
-- **Enhance** turns your rough notes plus the transcript into clean notes: summary, decisions, action items. You pick where that happens.
+- **Meeting audio (Mac):** hears both sides of a call — your microphone (“Me”) and everything the Mac plays, or just one app (FaceTime, Teams, Zoom, Webex, Slack, a browser…), as “Them”. No bot joins the call.
+- **Detect speakers:** after you stop, voices are labeled — Me/Them (or Them 1, Them 2…) on calls, Speaker 1, Speaker 2… in person. Click a name to rename a speaker.
+- **Enhance** turns your rough notes plus the transcript into clean notes using a template (meeting notes, voice memo, to-do list, interview, lecture, 1:1, or your own). You pick where that happens.
+- **Translate** notes or transcripts into other languages, on the device or with Claude.
+- **Names and terms:** list the people and jargon in your meetings so Enhance and Translate spell them right.
 - **Import and export** Markdown, plain text, Sintr backups and audio files. Notes are plain Markdown when exported, so Nextpad++ (and Parakeet) can open them.
+
+The options Parakeet shows next to its Record button — meeting audio, detect speakers, save audio, language — sit right under Sintr's Record button. Everything else is in **Settings** (the gear in the toolbar, or Sintr → Settings… / ⌘,).
 
 ## Privacy: what goes where
 
@@ -15,7 +20,9 @@ Private meeting notes for iPhone and Mac, in the spirit of Granola — but every
 | Transcription | Your device (Apple's speech model) | Only a one-time model download from Apple |
 | Enhance with Apple Intelligence | Your Mac (needs iPhone 15 Pro or newer on a phone) | No |
 | Enhance with the phone model | Your device | Only a one-time model download from Hugging Face, when you tap Download |
-| Send to Claude | Anthropic's Claude API | Yes — only when you tap it and confirm |
+| Detect speakers | Your device (open FluidAudio models) | Only a one-time download (a few dozen MB) from Hugging Face, when you agree |
+| Translate with Apple Translate | Your device | Only a one-time language download from Apple |
+| Send to Claude (Enhance or Translate) | Anthropic's Claude API | Yes — only when you choose it and confirm |
 | Share / Export | Wherever you send it (AirDrop goes directly between devices) | Depends on where you send it |
 
 Notes live in Sintr's private folder on each device. On iPhone they're kept out of iCloud and computer backups unless you turn that on in Settings. There is no sync: move notes between devices with **Export → Sintr backup** and **Import**.
@@ -26,6 +33,8 @@ Notes live in Sintr's private folder on each device. On iPhone they're kept out 
 |---|---|---|
 | Record + live transcript | ✓ (keeps going with the screen locked) | ✓ |
 | Record the other side of a call | — (iOS doesn't allow it) | ✓ |
+| Detect speakers | ✓ (Speaker 1, 2… — in person) | ✓ (also Me/Them on calls) |
+| Translate | ✓ | ✓ |
 | Enhance with Apple Intelligence | — (needs iPhone 15 Pro or newer) | ✓ |
 | Enhance with the phone model | ✓ (slower) | ✓ |
 | Send to Claude / Share | ✓ | ✓ |
@@ -71,6 +80,12 @@ Tip: record on the iPhone, send the note to the Mac, and Enhance it there with A
 bash ~/Sintr/update.sh
 ```
 Then press ▶ in Xcode again (and run `install-mac.sh` again if you use the copy in Applications). Your notes are kept.
+
+## Recording calls on the Mac
+
+1. Under the Record button, set **Meeting audio** to **All Mac audio** (catches any call app) or pick one app. **Off** is for in-person meetings and voice notes.
+2. The first time, macOS asks to let Sintr **record system audio** — click **Allow**. Without it, macOS quietly gives Sintr silence instead of the call. If you clicked Don't Allow, use the orange **Allow call audio…** button, or turn Sintr on in System Settings → Privacy & Security → Screen & System Audio Recording → System Audio Recording Only.
+3. While recording, the line under the timer says whether Sintr is hearing the call.
 
 ## Tips
 
