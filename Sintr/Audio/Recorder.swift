@@ -271,8 +271,10 @@ final class Recorder {
             do {
                 try await SpeakerPass.run(noteID: noteID, store: store, onlyFrom: sessionOffset, detectSpeakers: detect) { update in
                     Task { @MainActor [weak self] in
-                        self?.phase = .finishing(update.message)
-                        self?.progress = update.fraction
+                        // Updates can arrive late; never pull the bar back out of "idle".
+                        guard let self, self.isFinishing else { return }
+                        self.phase = .finishing(update.message)
+                        self.progress = update.fraction
                     }
                 }
             } catch {
