@@ -209,7 +209,7 @@ enum SpeakerPass {
             }
 
             let detectBase = step
-            let (turns, voices) = try await SpeakerDetector.turns(in: track.url) { fraction in
+            let (allTurns, voices) = try await SpeakerDetector.turns(in: track.url) { fraction in
                 progress(Progress(message: "Detecting speakers\(part)…", fraction: (detectBase + fraction) / steps))
             }
             step += 1
@@ -217,10 +217,10 @@ enum SpeakerPass {
             // Voices heard only for a moment (a cough, crosstalk) are folded into whoever was
             // talking around them rather than becoming a speaker of their own.
             var talkTime: [String: Double] = [:]
-            for turn in turns { talkTime[turn.speaker, default: 0] += turn.end - turn.start }
+            for turn in allTurns { talkTime[turn.speaker, default: 0] += turn.end - turn.start }
             let total = talkTime.values.reduce(0, +)
             let minor = Set(talkTime.filter { $0.value < 8 && $0.value < total * 0.04 }.keys)
-            let turns = minor.count < talkTime.count ? turns.filter { !minor.contains($0.speaker) } : turns
+            let turns = minor.count < talkTime.count ? allTurns.filter { !minor.contains($0.speaker) } : allTurns
 
             // Give each voice in this file a note-wide label, reusing labels for voices heard before.
             let isCall = track.speaker == "Them"
