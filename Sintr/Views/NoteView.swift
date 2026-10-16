@@ -10,6 +10,7 @@ struct NoteView: View {
 
     @Environment(NoteStore.self) private var store
     @Environment(Recorder.self) private var recorder
+    @Environment(PostProcessor.self) private var post
     @Environment(AppState.self) private var appState
     @State private var tab: Tab = .myNotes
     @State private var confirmDeleteAudio = false
@@ -106,7 +107,7 @@ struct NoteView: View {
                         Button("Delete recording (keep text)", systemImage: "waveform.slash", role: .destructive) {
                             confirmDeleteAudio = true
                         }
-                        .disabled(recorder.noteID == noteID)
+                        .disabled(recorder.noteID == noteID || post.isBusy(with: noteID))
                     }
                 } label: {
                     Label("Share", systemImage: "square.and.arrow.up")

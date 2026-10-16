@@ -139,7 +139,11 @@ enum SpeakerPass {
         let detect = detectSpeakers && SpeakerDetector.isInstalled
 
         let (segments, prints) = try await build(tracks: tracks, locale: locale, detectSpeakers: detect,
+                                                 removeEcho: AppSettings.shouldRemoveEcho,
                                                  knownVoices: note.voicePrints, progress: progress)
+        // Stopped (skipped, or the note was deleted) while working: change nothing.
+        try Task.checkCancellation()
+        guard store.note(noteID) != nil else { return }
 
         store.edit(noteID) { note in
             // Replace only the parts of the transcript that came from these recordings (a part
@@ -176,6 +180,7 @@ enum SpeakerPass {
         tracks: [Track],
         locale: Locale,
         detectSpeakers: Bool,
+        removeEcho echo: Bool,
         knownVoices: [String: [Float]],
         progress: @escaping @Sendable (Progress) -> Void
     ) async throws -> (segments: [TranscriptSegment], voices: [String: [Float]]) {
@@ -201,8 +206,13 @@ enum SpeakerPass {
                 return copy
             }
 
-            // Your own microphone in a meeting, or speaker detection off: one label for the whole file.
-            guard detectSpeakers, track.speaker != "Me" else {
+            ActivityLog.add("Speaker pass: \(track.speaker.isEmpty ? "recording" : track.speaker) track has \(words.count) words")
+            try Task.checkCancellation()
+
+            // Your own microphone in a meeting, speaker detection off, or nothing said on this
+            // track: one label for the whole file.
+            guard detectSpeakers, track.speaker != "Me", words.count >= 3 else {
+                if detectSpeakers, track.speaker != "Me" { step += 1 }
                 let label = track.speaker == "Them" ? "Them 1" : track.speaker
                 labeled += words.map { (word: shifted($0), label: label) }
                 continue
@@ -247,35 +257,55 @@ enum SpeakerPass {
         }
 
         labeled.sort { $0.word.start < $1.word.start }
-        labeled = removeEcho(labeled)
+        if echo {
+            let before = labeled.count
+            labeled = removeEcho(labeled)
+            if labeled.count < before { ActivityLog.add("Speaker pass: removed \(before - labeled.count) echoed words") }
+        }
         progress(Progress(message: "Putting the transcript together…", fraction: 1))
         return (group(labeled), newPrints)
     }
 
     /// Without headphones, the microphone also hears the call through the speakers, so the
-    /// other side's words show up twice — once as theirs and once as "Me". Drop the "Me" copies:
-    /// a "Me" word that matches a call-side word said within about a second.
-    private static func removeEcho(_ words: [(word: TimedWord, label: String)]) -> [(word: TimedWord, label: String)] {
-        let call = words.filter { $0.label.hasPrefix("Them") }.map { (time: $0.word.start, key: normalized($0.word.text)) }
+    /// other side's words show up twice — once as theirs and once as "Me". Drop the "Me" copies.
+    /// "Me" words are looked at in runs (split at pauses); a run is dropped when most of its
+    /// words were also said on the call side within a few seconds (see `EchoFilter`).
+    static func removeEcho(_ words: [(word: TimedWord, label: String)]) -> [(word: TimedWord, label: String)] {
+        let call = words.filter { $0.label.hasPrefix("Them") }
         guard !call.isEmpty, words.contains(where: { $0.label == "Me" }) else { return words }
-        var low = 0
-        return words.filter { entry in
-            guard entry.label == "Me" else { return true }
-            let key = normalized(entry.word.text)
-            guard key.count > 1 else { return true }
-            let time = entry.word.start
-            while low < call.count && call[low].time < time - 1.2 { low += 1 }
-            var index = low
-            while index < call.count && call[index].time <= time + 1.2 {
-                if call[index].key == key { return false }
-                index += 1
-            }
-            return true
-        }
-    }
 
-    private static func normalized(_ text: String) -> String {
-        text.lowercased().filter { $0.isLetter || $0.isNumber }
+        // Call-side words as short lines, for comparison.
+        var callLines: [EchoFilter.Line] = []
+        var pending: [TimedWord] = []
+        func flushCall() {
+            guard let first = pending.first, let last = pending.last else { return }
+            let words = pending.flatMap { EchoFilter.words($0.text) }
+            callLines.append(EchoFilter.Line(id: UUID(), start: first.start, end: last.end, words: words))
+            pending = []
+        }
+        for entry in call {
+            if let last = pending.last, entry.word.start - last.end > 1.0 || pending.count >= 25 { flushCall() }
+            pending.append(entry.word)
+        }
+        flushCall()
+
+        // "Me" runs: indexes into `words`.
+        var drop = Set<Int>()
+        var run: [Int] = []
+        func checkRun() {
+            guard let first = run.first, let last = run.last else { return }
+            let runWords = run.flatMap { EchoFilter.words(words[$0].word.text) }
+            let line = EchoFilter.Line(id: UUID(), start: words[first].word.start, end: words[last].word.end, words: runWords)
+            if EchoFilter.isEcho(line, of: callLines) { drop.formUnion(run) }
+            run = []
+        }
+        for (index, entry) in words.enumerated() where entry.label == "Me" {
+            if let last = run.last, entry.word.start - words[last].word.end > 0.7 || run.count >= 15 { checkRun() }
+            run.append(index)
+        }
+        checkRun()
+        guard !drop.isEmpty else { return words }
+        return words.enumerated().filter { !drop.contains($0.offset) }.map(\.element)
     }
 
     /// The voice talking during most of this word (or the nearest voice, in a gap).

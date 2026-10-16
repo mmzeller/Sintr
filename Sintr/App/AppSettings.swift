@@ -25,6 +25,10 @@ enum AppSettings {
     static let translateEngine = "translateEngine"
     static let claudeModel = "claudeModel"
     static let phoneModel = "phoneModel"
+    /// Mac: keep the input meters live even when not recording.
+    static let monitorLevels = "monitorLevels"
+    /// Drop lines the microphone picked up from the speakers (call audio heard twice).
+    static let removeEcho = "removeEcho"
 
     static let defaultClaudeModel = "claude-sonnet-5-5"
 
@@ -51,6 +55,8 @@ enum AppSettings {
             translateEngine: TranslateEngine.apple.rawValue,
             claudeModel: defaultClaudeModel,
             phoneModel: PhoneModelChoice.defaultChoice.rawValue,
+            monitorLevels: true,
+            removeEcho: true,
         ])
     }
 
@@ -61,6 +67,8 @@ enum AppSettings {
     static var meetingAudioChoice: MeetingAudio {
         MeetingAudio(rawValue: UserDefaults.standard.string(forKey: meetingAudio) ?? "") ?? .allAudio
     }
+    static var shouldMonitorLevels: Bool { UserDefaults.standard.bool(forKey: monitorLevels) }
+    static var shouldRemoveEcho: Bool { UserDefaults.standard.bool(forKey: removeEcho) }
     static var microphoneDeviceUID: String { UserDefaults.standard.string(forKey: microphoneUID) ?? "" }
     static var glossaryText: String {
         (UserDefaults.standard.string(forKey: glossary) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

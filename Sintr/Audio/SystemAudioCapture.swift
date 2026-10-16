@@ -10,7 +10,7 @@ import Foundation
 /// Core Audio process tap. No bot joins the call and nothing leaves the Mac.
 ///
 /// The tap is rebuilt automatically when the output device changes (AirPods connect) and, for a
-/// single app, when that app starts making sound or adds a helper process.
+/// single app, when that app starts playing sound from a new process.
 final class SystemAudioCapture: @unchecked Sendable {
     struct Signal: Sendable {
         /// Any audio buffers at all have arrived.
@@ -27,6 +27,8 @@ final class SystemAudioCapture: @unchecked Sendable {
     private var handler: (@Sendable (AVAudioPCMBuffer) -> Void)?
     private let ioQueue = DispatchQueue(label: "Sintr.CallAudio.io", qos: .userInitiated)
     private let controlQueue = DispatchQueue(label: "Sintr.CallAudio.control")
+    /// Property listeners must not run on the queue that removes them, or removing can deadlock.
+    private let listenerQueue = DispatchQueue(label: "Sintr.CallAudio.listener")
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var procID: AudioDeviceIOProcID?
@@ -34,6 +36,7 @@ final class SystemAudioCapture: @unchecked Sendable {
     private var watchTimer: DispatchSourceTimer?
     private var outputListener: AudioObjectPropertyListenerBlock?
     private var stopped = false
+    private var generation = 0
 
     private let lock = NSLock()
     private var startUptime: TimeInterval = 0
@@ -41,6 +44,12 @@ final class SystemAudioCapture: @unchecked Sendable {
     private var _received = false
     private var _heard = false
     private var _waiting = false
+    /// The format buffers are read with; its sample rate is corrected if the device delivers
+    /// a different rate than the tap claims.
+    private var format: AVAudioFormat?
+    private var rateCheckStart: TimeInterval = 0
+    private var rateCheckFrames: Double = 0
+    private var rateChecked = false
 
     init(source: MeetingAudio) {
         self.source = source
@@ -59,7 +68,7 @@ final class SystemAudioCapture: @unchecked Sendable {
     func start(handler: @escaping @Sendable (AVAudioPCMBuffer) -> Void) throws {
         self.handler = handler
         lock.withLock { startUptime = ProcessInfo.processInfo.systemUptime }
-        try controlQueue.sync { try rebuild() }
+        try controlQueue.sync { try rebuild(reason: "start") }
         listenForOutputChanges()
         if case .app = source { watchForAppAudio() }
     }
@@ -73,6 +82,7 @@ final class SystemAudioCapture: @unchecked Sendable {
             tearDownTap()
         }
         handler = nil
+        ActivityLog.add("Call audio: stopped")
     }
 
     deinit {
@@ -81,7 +91,7 @@ final class SystemAudioCapture: @unchecked Sendable {
 
     // MARK: Building the tap (always on controlQueue)
 
-    private func rebuild() throws {
+    private func rebuild(reason: String) throws {
         tearDownTap()
         guard !stopped else { return }
 
@@ -97,7 +107,10 @@ final class SystemAudioCapture: @unchecked Sendable {
         case .app(let bundleID):
             objects = MeetingApps.audioObjects(for: bundleID)
             lock.withLock { _waiting = objects.isEmpty }
-            guard !objects.isEmpty else { return }  // The watcher builds the tap once the app makes sound.
+            guard !objects.isEmpty else {
+                ActivityLog.add("Call audio: waiting for \(MeetingApps.displayName(for: bundleID)) to use audio")
+                return  // The watcher builds the tap once the app makes sound.
+            }
             description = CATapDescription(stereoMixdownOfProcesses: objects)
         }
         tappedObjects = objects
@@ -108,17 +121,21 @@ final class SystemAudioCapture: @unchecked Sendable {
 
         var newTap = AudioObjectID(kAudioObjectUnknown)
         var status = AudioHardwareCreateProcessTap(description, &newTap)
-        guard status == noErr else { throw CaptureError("set up call-audio capture", status) }
+        guard status == noErr else {
+            ActivityLog.add("Call audio: creating the tap failed (\(status))")
+            throw CaptureError("set up call-audio capture", status)
+        }
         tapID = newTap
 
         do {
             let output: AudioDeviceID = try Self.read(
-                AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultSystemOutputDevice,
+                AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice,
                 default: AudioDeviceID(kAudioObjectUnknown))
             let outputUID: CFString = try Self.read(output, kAudioDevicePropertyDeviceUID, default: "" as CFString)
+            let outputName: CFString = (try? Self.read(output, kAudioObjectPropertyName, default: "" as CFString)) ?? "" as CFString
             var streamDescription: AudioStreamBasicDescription = try Self.read(
                 tapID, kAudioTapPropertyFormat, default: AudioStreamBasicDescription())
-            guard let format = AVAudioFormat(streamDescription: &streamDescription) else {
+            guard let tapFormat = AVAudioFormat(streamDescription: &streamDescription) else {
                 throw CaptureError("read the call-audio format", -1)
             }
 
@@ -142,21 +159,72 @@ final class SystemAudioCapture: @unchecked Sendable {
             guard status == noErr else { throw CaptureError("create the call-audio device", status) }
             aggregateID = newAggregate
 
+            // The tap's own format can claim 48 kHz whatever the device runs at; trust the device.
+            let nominal: Float64 = (try? Self.read(aggregateID, kAudioDevicePropertyNominalSampleRate, default: Float64(0))) ?? 0
+            let rate = nominal > 0 ? nominal : tapFormat.sampleRate
+            let readFormat = AVAudioFormat(
+                commonFormat: tapFormat.commonFormat, sampleRate: rate,
+                channels: tapFormat.channelCount, interleaved: tapFormat.isInterleaved) ?? tapFormat
+            lock.withLock {
+                format = readFormat
+                rateChecked = false
+                rateCheckFrames = 0
+                rateCheckStart = 0
+            }
+            let what: String
+            switch source {
+            case .app(let id): what = "\(MeetingApps.displayName(for: id)) (\(objects.count) process\(objects.count == 1 ? "" : "es"))"
+            default: what = "all Mac audio"
+            }
+            ActivityLog.add("Call audio (\(reason)): tapping \(what) via \(outputName as String) — tap says \(Int(tapFormat.sampleRate)) Hz, device runs at \(Int(nominal)) Hz, \(tapFormat.channelCount) ch")
+
+            generation += 1
+            let myGeneration = generation
+            guard let handler else { return }
             status = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, ioQueue) { [weak self] _, inputData, _, _, _ in
-                guard let self,
-                      let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inputData, deallocator: nil)
+                guard let self, let format = self.usableFormat(for: inputData, generation: myGeneration),
+                      let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inputData, deallocator: nil),
+                      buffer.frameLength > 0
                 else { return }
                 self.noteSignal(buffer)
-                self.handler?(buffer)
+                handler(buffer)
             }
             guard status == noErr else { throw CaptureError("start reading call audio", status) }
 
             status = AudioDeviceStart(aggregateID, procID)
             guard status == noErr else { throw CaptureError("start call-audio capture", status) }
         } catch {
+            ActivityLog.add("Call audio: \(error.localizedDescription)")
             tearDownTap()
             throw error
         }
+    }
+
+    /// The format to read this callback's audio as. If the buffers Core Audio hands over don't
+    /// have the layout we expected (channel count or interleaving), adopt their actual layout
+    /// rather than read past the end of them.
+    private func usableFormat(for data: UnsafePointer<AudioBufferList>, generation: Int) -> AVAudioFormat? {
+        let list = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: data))
+        guard list.count > 0, list.allSatisfy({ $0.mData != nil }) else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+        guard let format else { return nil }
+        let expectedBuffers = format.isInterleaved ? 1 : Int(format.channelCount)
+        let channelsOK = format.isInterleaved
+            ? list[0].mNumberChannels == format.channelCount
+            : list.allSatisfy { $0.mNumberChannels == 1 }
+        if list.count == expectedBuffers, channelsOK { return format }
+
+        let interleaved = list.count == 1 && list[0].mNumberChannels > 1
+        let channels = interleaved ? list[0].mNumberChannels : UInt32(list.count)
+        guard channels > 0, let fixed = AVAudioFormat(
+            commonFormat: format.commonFormat, sampleRate: format.sampleRate,
+            channels: AVAudioChannelCount(channels), interleaved: interleaved)
+        else { return nil }
+        let old = AudioPipe.describe(format)
+        self.format = fixed
+        ActivityLog.add("Call audio: buffers arrive as \(AudioPipe.describe(fixed)), not \(old) — adjusted")
+        return fixed
     }
 
     private func tearDownTap() {
@@ -188,29 +256,58 @@ final class SystemAudioCapture: @unchecked Sendable {
                 }
             }
         }
-        lock.withLock {
-            _received = true
-            _waiting = false
-            if loud {
-                _heard = true
-                lastSoundUptime = ProcessInfo.processInfo.systemUptime
+        let now = ProcessInfo.processInfo.systemUptime
+        var corrected: Double?
+        lock.lock()
+        _received = true
+        _waiting = false
+        if loud {
+            if !_heard { ActivityLog.add("Call audio: first sound") }
+            _heard = true
+            lastSoundUptime = now
+        }
+        // Check how fast frames really arrive; if it's clearly not the rate we assumed, fix it.
+        if !rateChecked, let format {
+            if rateCheckStart == 0 {
+                rateCheckStart = now
+            } else {
+                rateCheckFrames += Double(buffer.frameLength)
+                let elapsed = now - rateCheckStart
+                if elapsed >= 4 {
+                    rateChecked = true
+                    let measured = rateCheckFrames / elapsed
+                    let assumed = format.sampleRate
+                    if abs(measured - assumed) / assumed > 0.04 {
+                        let standard: [Double] = [16000, 22050, 24000, 32000, 44100, 48000, 88200, 96000, 176400, 192000]
+                        let nearest = standard.min { abs($0 - measured) < abs($1 - measured) } ?? measured
+                        if let fixed = AVAudioFormat(commonFormat: format.commonFormat, sampleRate: nearest,
+                                                     channels: format.channelCount, interleaved: format.isInterleaved) {
+                            self.format = fixed
+                            corrected = nearest
+                        }
+                    }
+                    ActivityLog.add("Call audio: measured \(Int(measured)) frames/s (assumed \(Int(assumed)) Hz)")
+                }
             }
         }
+        lock.unlock()
+        if let corrected { ActivityLog.add("Call audio: corrected the sample rate to \(Int(corrected)) Hz") }
     }
 
     // MARK: Keeping the tap current
 
-    /// For a single app: every two seconds, check whether the app has started (or stopped)
-    /// making sound, and rebuild the tap to match.
+    /// For a single app: every two seconds, check whether the app has started making sound
+    /// from a process that isn't tapped yet, and rebuild the tap to include it.
     private func watchForAppAudio() {
         guard case .app(let bundleID) = source else { return }
         let timer = DispatchSource.makeTimerSource(queue: controlQueue)
         timer.schedule(deadline: .now() + 2, repeating: 2)
         timer.setEventHandler { [weak self] in
             guard let self, !self.stopped else { return }
-            let current = Set(MeetingApps.audioObjects(for: bundleID))
-            if !current.isEmpty, current != Set(self.tappedObjects) {
-                try? self.rebuild()
+            let playing = Set(MeetingApps.audioObjects(for: bundleID, onlyPlaying: true))
+            let tapped = Set(self.tappedObjects)
+            if !playing.isEmpty, !playing.isSubset(of: tapped) {
+                try? self.rebuild(reason: "app started playing from \(playing.subtracting(tapped).count) new process(es)")
             }
         }
         timer.resume()
@@ -218,7 +315,7 @@ final class SystemAudioCapture: @unchecked Sendable {
     }
 
     private var outputAddress = AudioObjectPropertyAddress(
-        mSelector: kAudioHardwarePropertyDefaultSystemOutputDevice,
+        mSelector: kAudioHardwarePropertyDefaultOutputDevice,
         mScope: kAudioObjectPropertyScopeGlobal,
         mElement: kAudioObjectPropertyElementMain)
 
@@ -228,16 +325,17 @@ final class SystemAudioCapture: @unchecked Sendable {
             // Give the new device a moment to settle, then follow it.
             self.controlQueue.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 guard let self, !self.stopped else { return }
-                try? self.rebuild()
+                ActivityLog.add("Call audio: the output device changed")
+                try? self.rebuild(reason: "output device changed")
             }
         }
         outputListener = listener
-        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &outputAddress, controlQueue, listener)
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &outputAddress, listenerQueue, listener)
     }
 
     private func removeOutputListener() {
         guard let listener = outputListener else { return }
-        AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &outputAddress, controlQueue, listener)
+        AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &outputAddress, listenerQueue, listener)
         outputListener = nil
     }
 
@@ -257,7 +355,18 @@ final class SystemAudioCapture: @unchecked Sendable {
         return status == noErr && object != kAudioObjectUnknown ? object : nil
     }
 
-    private static func read<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, default value: T) throws -> T {
+    /// Whether a process is currently sending audio to an output device.
+    static func isPlaying(_ object: AudioObjectID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioProcessPropertyIsRunningOutput,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var value: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr && value != 0
+    }
+
+    static func read<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, default value: T) throws -> T {
         var address = AudioObjectPropertyAddress(
             mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -343,7 +452,7 @@ enum MeetingApps {
 
     /// Core Audio objects for every process belonging to the app that has registered with the
     /// audio system — including helpers (Teams, Chrome and Slack play sound from helper processes).
-    static func audioObjects(for bundleID: String) -> [AudioObjectID] {
+    static func audioObjects(for bundleID: String, onlyPlaying: Bool = false) -> [AudioObjectID] {
         let bundlePaths = NSWorkspace.shared.runningApplications
             .filter { $0.bundleIdentifier == bundleID }
             .compactMap { $0.bundleURL?.resolvingSymlinksInPath().path }
@@ -360,7 +469,8 @@ enum MeetingApps {
                 if let path = executablePath(pid), path.hasSuffix("/avconferenced") { pids.insert(pid) }
             }
         }
-        return pids.compactMap(SystemAudioCapture.audioObject(for:)).sorted()
+        let objects = pids.compactMap(SystemAudioCapture.audioObject(for:)).sorted()
+        return onlyPlaying ? objects.filter(SystemAudioCapture.isPlaying) : objects
     }
 
     private static func allPIDs() -> [pid_t] {

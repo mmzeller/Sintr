@@ -4,6 +4,8 @@ Private meeting notes for iPhone and Mac, in the spirit of Granola — but every
 
 - **Type your own notes while Sintr listens.** It writes a live transcript as people talk.
 - **Meeting audio (Mac):** hears both sides of a call — your microphone (“Me”) and everything the Mac plays, or just one app (FaceTime, Teams, Zoom, Webex, Slack, a browser…), as “Them”. No bot joins the call.
+- **Live input meters:** on the Mac, the microphone and call-audio meters run all the time (not just while recording), so you can check what Sintr hears before you press Record.
+- **Echo removal:** without headphones your microphone also hears the call; Sintr drops those duplicate “Me” lines as you record, and again more precisely afterwards.
 - **Detect speakers:** after you stop, voices are labeled — Me/Them (or Them 1, Them 2…) on calls, Speaker 1, Speaker 2… in person. Click a name to rename a speaker.
 - **Enhance** turns your rough notes plus the transcript into clean notes using a template (meeting notes, voice memo, to-do list, interview, lecture, 1:1, or your own). You pick where that happens.
 - **Translate** notes or transcripts into other languages, on the device or with Claude.
@@ -85,11 +87,13 @@ Then press ▶ in Xcode again (and run `install-mac.sh` again if you use the cop
 
 1. Under the Record button, set **Meeting audio** to **All Mac audio** (catches any call app) or pick one app. **Off** is for in-person meetings and voice notes.
 2. The first time, macOS asks to let Sintr **record system audio** — click **Allow**. Without it, macOS quietly gives Sintr silence instead of the call. If you clicked Don't Allow, use the orange **Allow call audio…** button, or turn Sintr on in System Settings → Privacy & Security → Screen & System Audio Recording → System Audio Recording Only.
-3. While recording, the line under the timer says whether Sintr is hearing the call.
+3. The meters under the Record button show what Sintr hears **right now** — your microphone, and the call side (“quiet”, “waiting for Teams”, or “not allowed” if macOS is giving it silence). Play something before a meeting to check it.
+4. When you stop, the note is ready straight away. Speaker detection then runs in the background (a spinner shows next to the note); **Skip** stops it and keeps the live transcript. You can delete a note at any time, even while that runs.
 
 ## Tips
 
-- **On calls, wear headphones** if you can. Without them your Mac's microphone also hears the other person through the speakers, so some of their words show up twice — once as “Them” and once as “Me”.
+- **On calls, wear headphones** if you can. Without them your Mac's microphone also hears the other person through the speakers. **Remove echo** (Settings → Recording, on by default) drops most of those duplicates, but headphones are cleanest.
+- Live meters keep the microphone open, so macOS shows its orange microphone indicator while Sintr is open. Nothing is saved or transcribed until you press Record. Turn them off in Settings → Recording if you prefer.
 - Type only the key points in **My notes**; Enhance fills in the rest from the transcript and keeps your points first.
 - The first Enhance with the phone model loads it into memory and takes a little longer.
 
@@ -119,6 +123,8 @@ Replace `YOURDRIVE` with your thumb drive's name — or type `bash ~/Sintr/make-
 The iPhone app isn't affected; this is only for the Mac.
 
 ## If something goes wrong
+
+- **Start with the Activity Log** (Help → Activity Log… on the Mac, Settings → Troubleshooting on iPhone). It records which microphone and output device Sintr used, audio formats, when sound and words first arrived, timings and errors — never what anyone said. It keeps the previous session too, and on the Mac it shows a summary of the last crash. **Copy** it into a message to Claude.
 
 - **“Them” stays empty on the Mac:** System Settings → Privacy & Security → Screen & System Audio Recording → allow Sintr under “System Audio Recording Only”, then quit and reopen Sintr.
 - **The live transcript stopped while the phone was locked:** open the note → Transcript → **Re-transcribe from audio**. (Keep "Keep audio recordings" on in Settings so this is possible.)

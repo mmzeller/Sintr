@@ -3,6 +3,7 @@ import SwiftUI
 struct NoteListView: View {
     @Environment(NoteStore.self) private var store
     @Environment(Recorder.self) private var recorder
+    @Environment(PostProcessor.self) private var post
     @Environment(AppState.self) private var appState
     @State private var search = ""
     @State private var pendingDelete: Note?
@@ -55,7 +56,8 @@ struct NoteListView: View {
             ForEach(sections) { section in
                 Section(section.title) {
                     ForEach(section.notes) { note in
-                        NoteRow(note: note, isRecording: recorder.noteID == note.id)
+                        NoteRow(note: note, isRecording: recorder.noteID == note.id,
+                                isProcessing: post.current?.noteID == note.id)
                             .tag(note.id)
                             .contextMenu {
                                 Button("Export…", systemImage: "square.and.arrow.up") {
@@ -117,6 +119,7 @@ struct NoteListView: View {
             Button("Delete note and recording", role: .destructive) {
                 if let note = pendingDelete {
                     if appState.selection == note.id { appState.selection = nil }
+                    post.cancel(noteID: note.id)
                     store.delete(note.id)
                 }
                 pendingDelete = nil
@@ -130,6 +133,7 @@ struct NoteListView: View {
 private struct NoteRow: View {
     let note: Note
     let isRecording: Bool
+    let isProcessing: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -138,6 +142,8 @@ private struct NoteRow: View {
                     Image(systemName: "record.circle.fill")
                         .foregroundStyle(.red)
                         .symbolEffect(.pulse)
+                } else if isProcessing {
+                    ProgressView().controlSize(.mini)
                 }
                 Text(note.displayTitle)
                     .font(.headline)

@@ -2,8 +2,9 @@ import AVFoundation
 import Foundation
 import Observation
 
-/// Runs a recording: captures audio, transcribes it live on the device, writes the transcript
-/// into the note as it goes, and labels speakers when it stops.
+/// Runs a recording: takes audio from the `AudioHub`, transcribes it live on the device and
+/// writes the transcript into the note as it goes. When it stops, the note is free again
+/// within seconds; the slower speaker work is handed to the `PostProcessor`.
 @MainActor
 @Observable
 final class Recorder {
@@ -15,19 +16,15 @@ final class Recorder {
     }
 
     private(set) var phase: Phase = .idle
-    /// The note being recorded into (or finished).
+    /// The note being recorded into.
     private(set) var noteID: UUID?
     private(set) var startedAt: Date?
     /// Words still being worked out, per speaker label.
     private(set) var volatileText: [String: String] = [:]
-    private(set) var levels: [String: Float] = [:]
     /// Speaker labels in this recording, in display order.
     private(set) var speakers: [String] = []
-    /// Mac: a short line about the other side of the call ("Hearing FaceTime", "Waiting for Teams…").
-    private(set) var callStatus: String?
     /// Mac: the call side seems blocked by macOS permissions.
     private(set) var callBlocked = false
-    private(set) var progress: Double = 0
     var errorMessage: String?
     var notice: String?
     /// Set when Apple's speech model must be downloaded before recording can start.
@@ -43,26 +40,43 @@ final class Recorder {
         return false
     }
 
+    let hub: AudioHub
+    let post: PostProcessor
+
     @ObservationIgnored private var pendingNoteID: UUID?
     @ObservationIgnored private var skipSpeakerPack = false
-    @ObservationIgnored private var mic: MicCapture?
-    #if os(macOS)
-    @ObservationIgnored private var callAudio: SystemAudioCapture?
-    #endif
     @ObservationIgnored private var pipes: [AudioPipe] = []
     @ObservationIgnored private var offset: Double = 0
-    @ObservationIgnored private var meterTask: Task<Void, Never>?
+    @ObservationIgnored private var checkTask: Task<Void, Never>?
     @ObservationIgnored private var warnedSilentMic = false
+    @ObservationIgnored private var loggedNoWords: Set<String> = []
+    @ObservationIgnored private var lineCounts: [String: Int] = [:]
+    @ObservationIgnored private var echo = EchoFilter()
+    @ObservationIgnored private var echoesRemoved = 0
+    /// Lines are accepted only for the recording that's running (late ones are dropped).
+    @ObservationIgnored private var session: UUID?
     @ObservationIgnored private weak var store: NoteStore?
+
+    init(hub: AudioHub, post: PostProcessor) {
+        self.hub = hub
+        self.post = post
+        hub.onNotice = { [weak self] text in
+            ActivityLog.add(text)
+            if self?.isRecording == true { self?.notice = text }
+        }
+    }
 
     // MARK: Start
 
     func start(noteID: UUID, store: NoteStore) async {
         guard phase == .idle else { return }
+        guard !post.isBusy(with: noteID) else {
+            notice = "Sintr is still working on this note's last recording (\(post.message)). Press Skip to record right away."
+            return
+        }
         errorMessage = nil
         notice = nil
         callBlocked = false
-        callStatus = nil
         self.store = store
         phase = .preparing("Getting ready…")
         do {
@@ -70,7 +84,10 @@ final class Recorder {
         } catch {
             await abandon()
             phase = .idle
-            if !(error is CancellationError) { errorMessage = error.localizedDescription }
+            if !(error is CancellationError) {
+                ActivityLog.add("Recording didn't start: \(error.localizedDescription)")
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -143,70 +160,74 @@ final class Recorder {
             }
         }
         #endif
-        let labels = meeting.isOn ? ["Me", "Them"] : [""]
 
+        // The hub is usually already listening (that's what drives the meters).
+        phase = .preparing("Starting the microphone…")
+        let running = hub.ensureRunning(meeting: meeting)
+        guard hub.micIsRunning else { throw SpeechError.noMicrophone }
+        if meeting.isOn, !running.isOn {
+            notice = "Recording your microphone only — call audio couldn't start. (Details: Help → Activity Log.)"
+        }
+        meeting = running
+
+        let labels = meeting.isOn ? ["Me", "Them"] : [""]
+        ActivityLog.add("Recording started: \(meeting.isOn ? "microphone + \(meeting.rawValue == "all" ? "all Mac audio" : meeting.rawValue)" : "microphone only"), language \(locale.identifier)")
+        phase = .preparing("Starting transcription…")
         offset = store.note(noteID)?.duration ?? 0
         var newPipes: [AudioPipe] = []
         for label in labels {
             let transcriber = try await LiveTranscriber.make(locale: locale, speaker: label)
             // Audio is always saved while recording (speaker detection and re-transcribing need it);
-            // if "Save audio" is off it's deleted when you stop.
+            // if "Save audio" is off it's deleted afterwards.
             let fileURL = store.recordingURL(store.newRecordingName(for: noteID, speaker: label))
             newPipes.append(AudioPipe(transcriber: transcriber, saveTo: fileURL))
         }
         pipes = newPipes
 
+        let session = UUID()
+        self.session = session
+        echo = EchoFilter()
+        echoesRemoved = 0
+        lineCounts = [:]
+        loggedNoWords = []
         for pipe in newPipes {
             let label = pipe.transcriber.speaker
             let startOffset = offset
             try await pipe.transcriber.start(
                 volatile: { text in
-                    Task { @MainActor [weak self] in self?.volatileText[label] = text }
-                },
-                final: { start, text in
                     Task { @MainActor [weak self] in
-                        self?.addSegment(
-                            TranscriptSegment(speaker: label, start: startOffset + start, text: text), to: noteID)
+                        guard let self, self.session == session else { return }
+                        self.volatileText[label] = text
+                    }
+                },
+                final: { start, end, text in
+                    Task { @MainActor [weak self] in
+                        self?.addLine(label: label, start: startOffset + start, end: startOffset + end,
+                                      text: text, noteID: noteID, session: session)
                     }
                 },
                 failed: { error in
                     Task { @MainActor [weak self] in
-                        self?.notice = "Live transcription stopped (\(error.localizedDescription)). The audio is still being saved — the transcript is rebuilt from it when you stop."
+                        guard let self, self.session == session else { return }
+                        self.notice = "Live transcription stopped (\(error.localizedDescription)). The audio is still being saved, and the transcript is rebuilt from it when you stop."
                     }
                 })
         }
         speakers = labels
         self.noteID = noteID
 
-        // Microphone
-        let mic = MicCapture()
         let micPipe = newPipes[0]
-        mic.onInterruption = { [weak self] resumed in
-            self?.notice = resumed
-                ? "Recording resumed after an interruption."
-                : "Recording paused by another app (a call or Siri). It continues when that ends."
-        }
-        try mic.start { buffer in micPipe.process(buffer) }
-        self.mic = mic
-
-        // The other side of the call (Mac)
-        #if os(macOS)
-        if meeting.isOn, newPipes.count > 1 {
+        var callSink: (@Sendable (AVAudioPCMBuffer) -> Void)?
+        if newPipes.count > 1 {
             let callPipe = newPipes[1]
-            let capture = SystemAudioCapture(source: meeting)
-            do {
-                try capture.start { buffer in callPipe.process(buffer) }
-                callAudio = capture
-            } catch {
-                notice = "Recording your microphone only — \(error.localizedDescription)"
-            }
+            callSink = { buffer in callPipe.process(buffer) }
         }
-        #endif
+        hub.beginRecording(micSink: { buffer in micPipe.process(buffer) }, callSink: callSink)
 
         startedAt = Date()
         warnedSilentMic = false
         phase = .recording
-        startMonitoring()
+        startChecks()
     }
 
     // MARK: Stop
@@ -214,16 +235,21 @@ final class Recorder {
     func stop() async {
         guard phase == .recording, let noteID, let store else { return }
         phase = .finishing("Finishing the transcript…")
-        progress = 0
-        meterTask?.cancel()
+        checkTask?.cancel()
+        let pipes = self.pipes
 
-        mic?.stop()
-        #if os(macOS)
-        callAudio?.stop()
-        #endif
+        // Stop taking audio (the meters keep going on the Mac), then let the speech engine
+        // finish its last words — never for long.
+        hub.endRecording()
         for pipe in pipes { pipe.finish() }
-        for pipe in pipes { await pipe.transcriber.finish() }
-        await Task.yield()  // Let the last transcript updates land.
+        await withTaskGroup(of: Void.self) { group in
+            for pipe in pipes {
+                let transcriber = pipe.transcriber
+                group.addTask { await transcriber.finish(within: .seconds(12)) }
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(200))  // Let the last lines land.
+        session = nil
 
         let recorded = pipes.map(\.seconds).max() ?? 0
         let sessionOffset = offset
@@ -236,9 +262,9 @@ final class Recorder {
                 try? FileManager.default.removeItem(at: url)
             }
         }
+
         // A call side that never carried sound only adds an empty track.
-        #if os(macOS)
-        if let call = callAudio, !call.signal.heardSound {
+        if let callPipe = pipes.first(where: { $0.transcriber.speaker == "Them" }), !callPipe.heardSound {
             if let them = saved.firstIndex(where: { $0.speaker == "Them" }) {
                 try? FileManager.default.removeItem(at: store.recordingURL(saved[them].fileName))
                 saved.remove(at: them)
@@ -246,137 +272,128 @@ final class Recorder {
             if let me = saved.firstIndex(where: { $0.speaker == "Me" }) { saved[me].speaker = "" }
             store.edit(noteID) { note in
                 for index in note.transcript.indices
-                where note.transcript[index].start >= sessionOffset && note.transcript[index].speaker == "Me" {
+                where note.transcript[index].start >= sessionOffset - 0.5 && note.transcript[index].speaker == "Me" {
                     note.transcript[index].speaker = ""
                 }
             }
-            notice = callBlocked || SystemAudioPermission.status != .allowed
+            #if os(macOS)
+            let blocked = SystemAudioPermission.canCheck && SystemAudioPermission.status != .allowed
+            notice = blocked
                 ? "Sintr didn't hear the other side of the call — macOS gave it silence. Allow Sintr in \(SystemAudioPermission.settingsPath), then record again."
                 : "Sintr didn't hear any call audio during this recording, so it's labeled as an in-person recording."
-            callBlocked = SystemAudioPermission.status != .allowed
+            callBlocked = blocked
+            #endif
         }
-        #endif
         store.edit(noteID) { note in
             note.duration = max(note.duration, sessionOffset + recorded)
             note.recordings += saved
         }
         store.saveNow()
+        let summary = pipes.map { "\($0.transcriber.speaker.isEmpty ? "mic" : $0.transcriber.speaker) \(lineCounts[$0.transcriber.speaker] ?? 0) lines" }
+        ActivityLog.add("Recording stopped after \(Int(recorded)) s: \(summary.joined(separator: ", "))\(echoesRemoved > 0 ? ", \(echoesRemoved) echoed lines dropped" : "")")
 
-        // Label speakers from the saved audio. For calls this also removes the other side's
-        // voice where the microphone picked it up from the speakers.
-        let detect = AppSettings.shouldDetectSpeakers && SpeakerDetector.isInstalled
-        let bothSides = saved.contains { $0.speaker == "Me" } && saved.contains { $0.speaker == "Them" }
-        if !saved.isEmpty, detect || bothSides {
-            phase = .finishing(detect ? "Detecting speakers…" : "Tidying the transcript…")
-            do {
-                try await SpeakerPass.run(noteID: noteID, store: store, onlyFrom: sessionOffset, detectSpeakers: detect) { update in
-                    Task { @MainActor [weak self] in
-                        // Updates can arrive late; never pull the bar back out of "idle".
-                        guard let self, self.isFinishing else { return }
-                        self.phase = .finishing(update.message)
-                        self.progress = update.fraction
-                    }
-                }
-            } catch {
-                notice = "Couldn't detect speakers: \(error.localizedDescription)"
-            }
-        }
-
-        if !AppSettings.shouldKeepRecordings {
-            for recording in saved { try? FileManager.default.removeItem(at: store.recordingURL(recording.fileName)) }
-            let names = Set(saved.map(\.fileName))
-            store.edit(noteID) { $0.recordings.removeAll { names.contains($0.fileName) } }
-        }
-        store.saveNow()
+        // The note is free again; the rest happens in the background.
         tearDown()
         phase = .idle
+
+        let detect = AppSettings.shouldDetectSpeakers && SpeakerDetector.isInstalled
+        let bothSides = saved.contains { $0.speaker == "Me" } && saved.contains { $0.speaker == "Them" }
+        let deleteAfter = AppSettings.shouldKeepRecordings ? [] : saved.map(\.fileName)
+        if !saved.isEmpty, detect || (bothSides && AppSettings.shouldRemoveEcho) {
+            post.enqueue(PostProcessor.Job(
+                noteID: noteID, onlyFrom: sessionOffset, detectSpeakers: detect,
+                title: detect ? "Detecting speakers" : "Tidying the transcript",
+                deleteAfter: deleteAfter), store: store)
+        } else if !deleteAfter.isEmpty {
+            for name in deleteAfter { try? FileManager.default.removeItem(at: store.recordingURL(name)) }
+            let names = Set(deleteAfter)
+            store.edit(noteID) { $0.recordings.removeAll { names.contains($0.fileName) } }
+            store.saveNow()
+        }
     }
 
     // MARK: While recording
 
-    private func addSegment(_ segment: TranscriptSegment, to noteID: UUID) {
-        guard let store else { return }
+    private func addLine(label: String, start: Double, end: Double, text: String, noteID: UUID, session: UUID) {
+        guard self.session == session, let store else { return }  // A late line from a recording that's over.
+        let segment = TranscriptSegment(speaker: label, start: start, text: text)
+        if AppSettings.shouldRemoveEcho, speakers.count == 2 {
+            if label == "Me" {
+                if echo.addMine(id: segment.id, start: start, end: end, text: text) {
+                    echoesRemoved += 1
+                    return
+                }
+            } else {
+                let echoes = Set(echo.addTheirs(id: segment.id, start: start, end: end, text: text))
+                if !echoes.isEmpty {
+                    echoesRemoved += echoes.count
+                    lineCounts["Me", default: 0] -= echoes.count
+                    store.edit(noteID) { $0.transcript.removeAll { echoes.contains($0.id) } }
+                }
+            }
+        }
+        lineCounts[label, default: 0] += 1
         store.edit(noteID) { note in
             note.transcript.append(segment)
             note.transcript.sort { $0.start < $1.start }
         }
     }
 
-    private func startMonitoring() {
-        meterTask = Task { [weak self] in
-            var tick = 0
+    private func startChecks() {
+        checkTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self else { return }
-                var values: [String: Float] = [:]
-                for pipe in self.pipes { values[pipe.transcriber.speaker] = pipe.level }
-                self.levels = values
-                if tick % 8 == 0 { self.checkSignals() }
-                tick += 1
-                try? await Task.sleep(for: .milliseconds(120))
+                try? await Task.sleep(for: .seconds(1))
+                guard let self, !Task.isCancelled else { return }
+                self.checkSignals()
             }
         }
     }
 
-    /// Warns about a silent microphone and reports how the call side is doing.
+    /// Warns about a silent microphone, notices a blocked call side, and notes in the
+    /// Activity Log when a source carries sound but no words come out.
     private func checkSignals() {
         guard let started = startedAt, let micPipe = pipes.first else { return }
         let elapsed = Date().timeIntervalSince(started)
         if elapsed > 6, !micPipe.heardSound, !warnedSilentMic {
             warnedSilentMic = true
+            ActivityLog.add("Microphone: silent for the first 6 s")
             notice = Platform.isMac
                 ? "Your microphone sounds silent. It may be muted, or a different microphone may be selected — check Settings → Recording → Microphone."
                 : "Your microphone sounds silent. Check that nothing is covering it and that Sintr is allowed to use it."
         }
         #if os(macOS)
-        guard let call = callAudio else { callStatus = nil; return }
-        let signal = call.signal
-        let name: String
-        switch call.source {
-        case .app(let id): name = MeetingApps.displayName(for: id)
-        default: name = "Mac audio"
-        }
-        if signal.waitingForApp {
-            callStatus = "Waiting for \(name) to play sound…"
-        } else if signal.heardSound && signal.secondsSinceSound < 4 {
-            callStatus = "Hearing \(name)"
-            callBlocked = false
-        } else if !signal.heardSound && elapsed > 20 && micPipe.heardSound {
-            callStatus = "Not hearing the call yet"
-            if SystemAudioPermission.status != .allowed { callBlocked = true }
-        } else {
-            callStatus = "Listening to \(name)"
-        }
+        if hub.callState == .notAllowed, elapsed > 10 { callBlocked = true }
+        if hub.callState == .hearing { callBlocked = false }
         #endif
+        for pipe in pipes {
+            let label = pipe.transcriber.speaker
+            if pipe.heardSound, pipe.seconds > 45, (lineCounts[label] ?? 0) == 0,
+               (volatileText[label] ?? "").isEmpty, !loggedNoWords.contains(label) {
+                loggedNoWords.insert(label)
+                ActivityLog.add("\(label.isEmpty ? "Microphone" : label): \(Int(pipe.seconds)) s of audio with sound, but no words recognized yet")
+            }
+        }
     }
 
     /// Undo a start that failed partway.
     private func abandon() async {
-        mic?.stop()
-        #if os(macOS)
-        callAudio?.stop()
-        #endif
+        session = nil
+        hub.endRecording()
         for pipe in pipes {
             pipe.finish()
-            await pipe.transcriber.finish()
+            await pipe.transcriber.finish(within: .seconds(4))
             if let url = pipe.fileURL { try? FileManager.default.removeItem(at: url) }
         }
         tearDown()
     }
 
     private func tearDown() {
-        meterTask?.cancel()
-        meterTask = nil
-        mic = nil
-        #if os(macOS)
-        callAudio = nil
-        #endif
+        checkTask?.cancel()
+        checkTask = nil
         pipes = []
         noteID = nil
         startedAt = nil
         volatileText = [:]
-        levels = [:]
         speakers = []
-        callStatus = nil
-        progress = 0
     }
 }

@@ -22,6 +22,12 @@ final class Importer {
     var summary: String?
     /// The note the last import created, so the UI can open it.
     private(set) var lastCreatedNote: UUID?
+    /// Transcribing imported audio (and rebuilding transcripts) happens there, in the background.
+    let post: PostProcessor
+
+    init(post: PostProcessor) {
+        self.post = post
+    }
 
     func importFiles(_ urls: [URL], into store: NoteStore) async {
         isWorking = true
@@ -98,17 +104,12 @@ final class Importer {
             if let date = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate { note.created = date }
         }
         let detect = AppSettings.shouldDetectSpeakers && SpeakerDetector.isInstalled
-        try await SpeakerPass.run(noteID: note.id, store: store, detectSpeakers: detect) { update in
-            Task { @MainActor [weak self] in
-                self?.status = "\(url.lastPathComponent): \(update.message)"
-                self?.progress = update.fraction
-            }
-        }
-        if !AppSettings.shouldKeepRecordings {
-            try? FileManager.default.removeItem(at: destination)
-            store.edit(note.id) { $0.recordings = [] }
-        }
-        return "\(url.lastPathComponent): transcribed (\(Note.durationText(length)))."
+        post.enqueue(PostProcessor.Job(
+            noteID: note.id, onlyFrom: nil, detectSpeakers: detect,
+            title: "Transcribing \(url.lastPathComponent)",
+            doneMessage: "“\(url.deletingPathExtension().lastPathComponent)” is transcribed.",
+            deleteAfter: AppSettings.shouldKeepRecordings ? [] : [destination.lastPathComponent]), store: store)
+        return "\(url.lastPathComponent): added (\(Note.durationText(length))). It's being transcribed in the background — you can keep working."
     }
 
     /// Copies audio as-is when it's a format the speech model reads directly,
@@ -133,28 +134,16 @@ final class Importer {
     }
 
     /// Rebuilds a note's transcript from its saved audio — with speaker labels when
-    /// `detectSpeakers` is on (and the speaker pack is downloaded).
-    func rebuildTranscript(_ noteID: UUID, store: NoteStore, detectSpeakers: Bool) async {
-        guard let note = store.note(noteID), !note.recordings.isEmpty else { return }
-        isWorking = true
-        defer {
-            isWorking = false
-            status = ""
-            progress = 0
-        }
-        do {
-            try await SpeakerPass.run(noteID: noteID, store: store, detectSpeakers: detectSpeakers) { update in
-                Task { @MainActor [weak self] in
-                    self?.status = update.message
-                    self?.progress = update.fraction
-                }
-            }
-            summary = detectSpeakers && SpeakerDetector.isInstalled
+    /// `detectSpeakers` is on (and the speaker pack is downloaded). Runs in the background.
+    func rebuildTranscript(_ noteID: UUID, store: NoteStore, detectSpeakers: Bool) {
+        guard let note = store.note(noteID), !note.recordings.isEmpty, !post.isBusy(with: noteID) else { return }
+        let detect = detectSpeakers && SpeakerDetector.isInstalled
+        post.enqueue(PostProcessor.Job(
+            noteID: noteID, onlyFrom: nil, detectSpeakers: detect,
+            title: detect ? "Identifying speakers" : "Rebuilding the transcript",
+            doneMessage: detect
                 ? "Transcript rebuilt with speaker labels. Click a speaker's name to rename them."
-                : "Transcript rebuilt from the recording."
-        } catch {
-            summary = "Couldn't rebuild the transcript: \(error.localizedDescription)"
-        }
+                : "Transcript rebuilt from the recording."), store: store)
     }
 
     private static func title(from text: String, fallback: String) -> String {

@@ -15,6 +15,11 @@ struct SettingsView: View {
     @AppStorage(AppSettings.glossary) private var glossary = ""
     @AppStorage(AppSettings.claudeModel) private var claudeModel = AppSettings.defaultClaudeModel
     @AppStorage(AppSettings.phoneModel) private var phoneModelRaw = PhoneModelChoice.defaultChoice.rawValue
+    @AppStorage(AppSettings.monitorLevels) private var monitorLevels = true
+    @AppStorage(AppSettings.removeEcho) private var removeEcho = true
+    #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    #endif
 
     @State private var locales: [Locale] = []
     @State private var resolved: Locale?
@@ -53,6 +58,7 @@ struct SettingsView: View {
             glossarySection
             phoneModelSection
             claudeSection
+            troubleshootingSection
             aboutSection
         }
         .formStyle(.grouped)
@@ -178,6 +184,11 @@ struct SettingsView: View {
                     Text("Not connected").tag(microphoneUID)
                 }
             }
+            Toggle("Live input meters when not recording", isOn: $monitorLevels)
+            LabeledContent("Hearing now") {
+                LiveInputs()
+            }
+            Toggle("Remove echo of the call from my microphone", isOn: $removeEcho)
             #endif
             Toggle("Save audio with notes", isOn: $keepRecordings)
             #if os(iOS)
@@ -191,7 +202,9 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 #if os(macOS)
                 Text("Meeting audio is what Sintr records besides your microphone. “All Mac audio” hears the other side of FaceTime, Teams, Zoom, Webex, Slack, WhatsApp or a call in your browser, and labels it “Them”. Pick one app to leave out other sounds (music, notifications). Off is for in-person meetings and voice notes.")
-                Text("macOS gives Sintr silence instead of the call until you allow it: \(SystemAudioPermission.settingsPath). Wear headphones if you can — otherwise the microphone also hears the call from your speakers (Sintr removes most of those duplicates).")
+                Text("macOS gives Sintr silence instead of the call until you allow it: \(SystemAudioPermission.settingsPath).")
+                Text("Live input meters keep the microphone (and call audio) open so you can see what Sintr hears before you record — macOS shows its microphone indicator meanwhile. Nothing is saved or transcribed until you press Record.")
+                Text("Without headphones your microphone also hears the call from your speakers. “Remove echo” drops those duplicate lines from “Me” — while recording, and again more precisely afterwards. Headphones still work best.")
                 #endif
                 Text("Saved audio lets you rebuild a transcript, detect speakers later, or export the recording. About 15–30 MB per hour.")
                 #if os(iOS)
@@ -345,6 +358,26 @@ struct SettingsView: View {
             Text("Claude")
         } footer: {
             Text("Used only when you tap Send to Claude and confirm. Get a key at console.anthropic.com — it's billed per use and is separate from a Claude.ai subscription. The key is kept in this \(Platform.deviceName)'s Keychain.")
+        }
+    }
+
+    private var troubleshootingSection: some View {
+        Section {
+            #if os(macOS)
+            Button("Open Activity Log", systemImage: "list.bullet.rectangle") {
+                openWindow(id: ActivityLogView.windowID)
+            }
+            #else
+            NavigationLink {
+                ActivityLogView()
+            } label: {
+                Label("Activity Log", systemImage: "list.bullet.rectangle")
+            }
+            #endif
+        } header: {
+            Text("Troubleshooting")
+        } footer: {
+            Text("What Sintr's audio and speech parts are doing — devices, formats, timings and errors, never what anyone said. If something goes wrong, copy it into a message.")
         }
     }
 

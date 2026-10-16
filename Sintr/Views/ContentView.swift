@@ -172,6 +172,10 @@ private struct EmptyDetailView: View {
                 .disabled(recorder.isActive)
             }
             .controlSize(.large)
+            PostProcessingRow(noteID: nil)
+                .frame(maxWidth: 520)
+            LiveInputs()
+                .padding(.top, 6)
         }
         .padding(30)
     }

@@ -48,11 +48,14 @@ enum SystemAudioPermission {
             openSettings()
             return false
         }
-        return await withCheckedContinuation { continuation in
-            request(service, nil) { granted in
-                continuation.resume(returning: granted)
-            }
+        ActivityLog.add("Asking macOS for permission to record system audio")
+        let once = ResumeOnce()
+        let granted = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            once.set(continuation)
+            request(service, nil) { granted in once.resume(granted) }
         }
+        ActivityLog.add("System audio permission: \(granted ? "allowed" : "not allowed")")
+        return granted
     }
 
     /// System Settings → Privacy & Security → Screen & System Audio Recording.
@@ -67,6 +70,20 @@ enum SystemAudioPermission {
     }
 
     static let settingsPath = "System Settings → Privacy & Security → Screen & System Audio Recording → System Audio Recording Only"
+
+    /// macOS's callback could, in theory, arrive twice; resuming twice would crash.
+    private final class ResumeOnce: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Bool, Never>?
+        func set(_ continuation: CheckedContinuation<Bool, Never>) { lock.withLock { self.continuation = continuation } }
+        func resume(_ value: Bool) {
+            let continuation = lock.withLock { () -> CheckedContinuation<Bool, Never>? in
+                defer { self.continuation = nil }
+                return self.continuation
+            }
+            continuation?.resume(returning: value)
+        }
+    }
 
     // MARK: Private calls into TCC (the privacy database), looked up at run time.
 

@@ -6,6 +6,7 @@ struct TranscriptView: View {
     @Environment(NoteStore.self) private var store
     @Environment(Recorder.self) private var recorder
     @Environment(Importer.self) private var importer
+    @Environment(PostProcessor.self) private var post
     @State private var renaming: String?
     @State private var nameDraft = ""
     @State private var askDownload = false
@@ -13,7 +14,7 @@ struct TranscriptView: View {
 
     private var note: Note { store.note(noteID) ?? Note() }
     private var isRecordingHere: Bool { recorder.noteID == noteID && recorder.isRecording }
-    private var busy: Bool { recorder.noteID == noteID || importer.isWorking || downloading != nil }
+    private var busy: Bool { recorder.noteID == noteID || post.isBusy(with: noteID) || downloading != nil }
 
     var body: some View {
         let note = self.note
@@ -105,14 +106,14 @@ struct TranscriptView: View {
                 Menu {
                     Button("Identify speakers", systemImage: "person.2.wave.2") {
                         if SpeakerDetector.isInstalled {
-                            Task { await importer.rebuildTranscript(noteID, store: store, detectSpeakers: true) }
+                            importer.rebuildTranscript(noteID, store: store, detectSpeakers: true)
                         } else {
                             askDownload = true
                         }
                     }
                     .disabled(!SpeakerDetector.isAvailable)
                     Button("Rebuild transcript without speaker labels", systemImage: "arrow.clockwise") {
-                        Task { await importer.rebuildTranscript(noteID, store: store, detectSpeakers: false) }
+                        importer.rebuildTranscript(noteID, store: store, detectSpeakers: false)
                     }
                 } label: {
                     Label("From audio", systemImage: "waveform")
@@ -150,7 +151,7 @@ struct TranscriptView: View {
                     Task { @MainActor in downloading = value }
                 }
                 downloading = nil
-                await importer.rebuildTranscript(noteID, store: store, detectSpeakers: true)
+                importer.rebuildTranscript(noteID, store: store, detectSpeakers: true)
             } catch {
                 downloading = nil
                 importer.summary = "Speaker detection didn't download: \(error.localizedDescription)"

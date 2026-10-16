@@ -34,39 +34,54 @@ final class LiveTranscriber: @unchecked Sendable {
             reportingOptions: [.volatileResults],
             attributeOptions: [.audioTimeRange]
         )
-        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
-            throw SpeechError.noAudioFormat
+        let best = try await Race.run("Preparing the speech model", timeout: .seconds(20)) {
+            Unchecked(await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]))
         }
+        guard let format = best.value else { throw SpeechError.noAudioFormat }
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         return LiveTranscriber(speaker: speaker, format: format, transcriber: transcriber, analyzer: analyzer)
     }
 
     /// Starts listening. `volatile` gets the words still being worked out (shown greyed),
-    /// `final` gets each finished stretch of speech with its time from the start of this recording.
+    /// `final` gets each finished stretch of speech with its start and end time from the start
+    /// of this recording.
     func start(
         volatile: @escaping @Sendable (String) -> Void,
-        final: @escaping @Sendable (Double, String) -> Void,
+        final: @escaping @Sendable (Double, Double, String) -> Void,
         failed: @escaping @Sendable (Error) -> Void
     ) async throws {
         let transcriber = self.transcriber
+        let label = speaker.isEmpty ? "Microphone" : speaker
         resultsTask = Task {
+            var count = 0
             do {
                 for try await result in transcriber.results {
                     let text = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
                     if result.isFinal {
                         volatile("")
                         guard !text.isEmpty else { continue }
-                        let start = result.text.runs.compactMap(\.audioTimeRange).first?.start.seconds ?? 0
-                        final(start.isFinite ? start : 0, text)
+                        let ranges = result.text.runs.compactMap(\.audioTimeRange)
+                        let start = ranges.first?.start.seconds ?? 0
+                        let end = ranges.last?.end.seconds ?? start
+                        count += 1
+                        if count == 1 { ActivityLog.add("\(label): first words transcribed") }
+                        final(start.isFinite ? start : 0, end.isFinite ? end : start, text)
                     } else {
                         volatile(text)
                     }
                 }
             } catch {
-                if !(error is CancellationError) { failed(error) }
+                if !(error is CancellationError) {
+                    ActivityLog.add("\(label): live transcription failed (\(error.localizedDescription))")
+                    failed(error)
+                }
             }
         }
-        try await analyzer.start(inputSequence: input)
+        let analyzer = self.analyzer
+        let input = self.input
+        try await Race.run("Starting live transcription", timeout: .seconds(20)) {
+            try await analyzer.start(inputSequence: input)
+        }
         started = true
     }
 
@@ -74,19 +89,37 @@ final class LiveTranscriber: @unchecked Sendable {
         inputContinuation.yield(AnalyzerInput(buffer: buffer))
     }
 
-    /// Lets the model finish the last words, then stops.
-    func finish() async {
+    /// Lets the model finish the last words, then stops. Never waits longer than `limit`:
+    /// if Apple's speech engine gets stuck, it's told to stop right away and whatever was
+    /// already transcribed is kept.
+    func finish(within limit: Duration = .seconds(12)) async {
         inputContinuation.finish()
+        let label = speaker.isEmpty ? "Microphone" : speaker
         guard started else {
             resultsTask?.cancel()
             return
         }
-        do {
+        let analyzer = self.analyzer
+        let clock = ContinuousClock()
+        let began = clock.now
+        let finalized = await Race.finishes("\(label): finishing the transcript", within: limit) {
             try await analyzer.finalizeAndFinishThroughEndOfInput()
-        } catch {
-            await analyzer.cancelAndFinishNow()
         }
-        await resultsTask?.value
+        if !finalized {
+            await Race.finishes("\(label): stopping the speech engine", within: .seconds(3)) {
+                await analyzer.cancelAndFinishNow()
+            }
+        }
+        // Let the last results come through, briefly.
+        if let results = resultsTask {
+            let drained = await Race.finishes("\(label): last results", within: .seconds(3)) {
+                await results.value
+            }
+            if !drained { results.cancel() }
+        }
+        let elapsed = clock.now - began
+        let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        ActivityLog.add("\(label): transcript finished in \(String(format: "%.1f", seconds)) s")
     }
 }
 
@@ -111,30 +144,34 @@ enum FileTranscriber {
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         let file = try AVAudioFile(forReading: url)
         let length = Double(file.length) / file.processingFormat.sampleRate
-        try await analyzer.start(inputAudioFile: file, finishAfterFile: true)
+        return try await withTaskCancellationHandler {
+            try await analyzer.start(inputAudioFile: file, finishAfterFile: true)
 
-        var words: [TimedWord] = []
-        for try await result in transcriber.results {
-            try Task.checkCancellation()
-            let text = result.text
-            for run in text.runs {
-                let piece = String(text[run.range].characters)
-                guard !piece.isEmpty else { continue }
-                if let range = run.audioTimeRange, range.start.seconds.isFinite, range.end.seconds.isFinite {
-                    words.append(TimedWord(start: range.start.seconds, end: range.end.seconds, text: piece))
-                } else if !words.isEmpty {
-                    words[words.count - 1].text += piece  // punctuation and spacing without a time
+            var words: [TimedWord] = []
+            for try await result in transcriber.results {
+                try Task.checkCancellation()
+                let text = result.text
+                for run in text.runs {
+                    let piece = String(text[run.range].characters)
+                    guard !piece.isEmpty else { continue }
+                    if let range = run.audioTimeRange, range.start.seconds.isFinite, range.end.seconds.isFinite {
+                        words.append(TimedWord(start: range.start.seconds, end: range.end.seconds, text: piece))
+                    } else if !words.isEmpty {
+                        words[words.count - 1].text += piece  // punctuation and spacing without a time
+                    }
+                }
+                // Keep a space between consecutive results.
+                if let last = words.last, !last.text.hasSuffix(" ") { words[words.count - 1].text += " " }
+                if length > 0 {
+                    let done = result.resultsFinalizationTime.seconds / length
+                    if done.isFinite { progress(min(max(done, 0), 1)) }
                 }
             }
-            // Keep a space between consecutive results.
-            if let last = words.last, !last.text.hasSuffix(" ") { words[words.count - 1].text += " " }
-            if length > 0 {
-                let done = result.resultsFinalizationTime.seconds / length
-                if done.isFinite { progress(min(max(done, 0), 1)) }
-            }
+            progress(1)
+            return words
+        } onCancel: {
+            Task { await analyzer.cancelAndFinishNow() }
         }
-        progress(1)
-        return words
     }
 
     static func transcribe(
@@ -147,22 +184,26 @@ enum FileTranscriber {
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         let file = try AVAudioFile(forReading: url)
         let length = Double(file.length) / file.processingFormat.sampleRate
-        try await analyzer.start(inputAudioFile: file, finishAfterFile: true)
+        return try await withTaskCancellationHandler {
+            try await analyzer.start(inputAudioFile: file, finishAfterFile: true)
 
-        var pieces: [(start: Double, text: String)] = []
-        for try await result in transcriber.results {
-            try Task.checkCancellation()
-            let text = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty {
-                let start = result.text.runs.compactMap(\.audioTimeRange).first?.start.seconds ?? 0
-                pieces.append((start.isFinite ? start : 0, text))
+            var pieces: [(start: Double, text: String)] = []
+            for try await result in transcriber.results {
+                try Task.checkCancellation()
+                let text = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
+                    let start = result.text.runs.compactMap(\.audioTimeRange).first?.start.seconds ?? 0
+                    pieces.append((start.isFinite ? start : 0, text))
+                }
+                if length > 0 {
+                    let done = result.resultsFinalizationTime.seconds / length
+                    if done.isFinite { progress(min(max(done, 0), 1)) }
+                }
             }
-            if length > 0 {
-                let done = result.resultsFinalizationTime.seconds / length
-                if done.isFinite { progress(min(max(done, 0), 1)) }
-            }
+            progress(1)
+            return pieces
+        } onCancel: {
+            Task { await analyzer.cancelAndFinishNow() }
         }
-        progress(1)
-        return pieces
     }
 }

@@ -3,12 +3,14 @@ import SwiftUI
 import AppKit
 #endif
 
-/// The bar at the bottom of a note: Record/Stop, and — like Parakeet's panel — the recording
-/// options right next to it.
+/// The bar at the bottom of a note: Record/Stop, live input meters, and — like Parakeet's
+/// panel — the recording options right next to it.
 struct RecordBar: View {
     let noteID: UUID
     @Environment(NoteStore.self) private var store
     @Environment(Recorder.self) private var recorder
+    @Environment(PostProcessor.self) private var post
+    @Environment(AudioHub.self) private var hub
     @Environment(AppState.self) private var appState
 
     private var isThisNote: Bool { recorder.noteID == noteID || (recorder.noteID == nil && recorder.isActive) }
@@ -16,21 +18,13 @@ struct RecordBar: View {
     var body: some View {
         VStack(spacing: 8) {
             if let notice = recorder.notice, isThisNote || !recorder.isActive {
-                HStack(alignment: .top) {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text(notice).font(.callout)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                    #if os(macOS)
-                    if recorder.callBlocked {
-                        Button("Open Settings") { SystemAudioPermission.openSettings() }
-                            .font(.callout)
-                    }
-                    #endif
-                    Button("Dismiss") { recorder.notice = nil }
-                        .buttonStyle(.borderless)
-                        .font(.callout)
-                }
+                NoticeRow(text: notice, showsSettings: recorder.callBlocked) { recorder.notice = nil }
+            }
+            if let notice = post.notice, !recorder.isActive {
+                NoticeRow(text: notice, icon: "info.circle.fill", tint: .secondary, showsSettings: false) { post.notice = nil }
+            }
+            if post.isWorking, !recorder.isRecording {
+                PostProcessingRow(noteID: noteID)
             }
             content
         }
@@ -45,6 +39,7 @@ struct RecordBar: View {
         case .idle:
             VStack(alignment: .leading, spacing: 10) {
                 recordButtonRow
+                LiveInputs()
                 RecordingOptions()
             }
         case .preparing(let message):
@@ -56,7 +51,7 @@ struct RecordBar: View {
         case .recording:
             if isThisNote { recording } else { elsewhere }
         case .finishing(let message):
-            if isThisNote { progressRow(message, value: recorder.progress) } else { elsewhere }
+            if isThisNote { progressRow(message, value: 0) } else { elsewhere }
         }
     }
 
@@ -84,6 +79,8 @@ struct RecordBar: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(.red)
+            .disabled(post.isBusy(with: noteID))
+            .help(post.isBusy(with: noteID) ? "Sintr is still working on this note's last recording — press Skip to record now." : "Start recording into this note")
             Text(hint)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -118,9 +115,6 @@ struct RecordBar: View {
                             .font(.title3.monospacedDigit().weight(.medium))
                     }
                 }
-                ForEach(recorder.speakers, id: \.self) { speaker in
-                    LevelMeter(label: speaker.isEmpty ? nil : speaker, level: recorder.levels[speaker] ?? 0)
-                }
                 Spacer()
                 Button {
                     Task { await recorder.stop() }
@@ -131,20 +125,18 @@ struct RecordBar: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
+            LiveInputs(recordingLabels: recorder.speakers)
             #if os(macOS)
-            if let status = recorder.callStatus {
+            if recorder.callBlocked {
                 HStack(spacing: 6) {
-                    Image(systemName: recorder.callBlocked ? "speaker.slash" : "speaker.wave.2")
-                        .foregroundStyle(recorder.callBlocked ? .orange : .secondary)
-                    Text(status).font(.footnote).foregroundStyle(.secondary)
-                    if recorder.callBlocked {
-                        Button("Allow…") {
-                            Task {
-                                if !(await SystemAudioPermission.request()) { SystemAudioPermission.openSettings() }
-                            }
+                    Image(systemName: "speaker.slash").foregroundStyle(.orange)
+                    Text("macOS is giving Sintr silence instead of the call.").font(.footnote).foregroundStyle(.secondary)
+                    Button("Allow…") {
+                        Task {
+                            if !(await SystemAudioPermission.request()) { SystemAudioPermission.openSettings() }
                         }
-                        .font(.footnote)
                     }
+                    .font(.footnote)
                 }
             }
             #endif
@@ -180,6 +172,187 @@ struct RecordBar: View {
                 Button("Go to it") { appState.selection = other }
             }
         }
+    }
+}
+
+private struct NoticeRow: View {
+    let text: String
+    var icon = "exclamationmark.triangle.fill"
+    var tint: Color = .orange
+    let showsSettings: Bool
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top) {
+            Image(systemName: icon).foregroundStyle(tint)
+            Text(text).font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            #if os(macOS)
+            if showsSettings {
+                Button("Open Settings") { SystemAudioPermission.openSettings() }
+                    .font(.callout)
+            }
+            #endif
+            Button("Dismiss", action: dismiss)
+                .buttonStyle(.borderless)
+                .font(.callout)
+        }
+    }
+}
+
+/// "Detecting speakers… [Skip]" — the background work after a recording or import.
+struct PostProcessingRow: View {
+    let noteID: UUID?
+    @Environment(PostProcessor.self) private var post
+    @Environment(NoteStore.self) private var store
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        if let job = post.current {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(job.noteID == noteID ? post.message : "\(post.message) — “\(store.note(job.noteID)?.displayTitle ?? "a note")”")
+                        .font(.callout)
+                        .lineLimit(1)
+                    Spacer()
+                    if job.noteID != noteID {
+                        Button("Go to it") { appState.selection = job.noteID }
+                            .buttonStyle(.borderless)
+                            .font(.callout)
+                    }
+                    Button("Skip") { post.skip() }
+                        .font(.callout)
+                        .help("Stop this and keep the live transcript as it is.")
+                }
+                if post.progress > 0 && post.progress < 1 {
+                    ProgressView(value: post.progress)
+                }
+            }
+        }
+    }
+}
+
+/// Live input meters — your microphone and, on the Mac, call audio. Shown before recording
+/// (so you can check what Sintr hears) and while recording.
+struct LiveInputs: View {
+    /// While recording: the speaker labels in use ("Me"/"Them", or "" in person).
+    var recordingLabels: [String]? = nil
+    @Environment(AudioHub.self) private var hub
+    @AppStorage(AppSettings.monitorLevels) private var monitor = true
+
+    var body: some View {
+        let recording = recordingLabels != nil
+        if recording || hub.micRunning || hub.callState != .off {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 18) { meters(recording: recording) }
+                VStack(alignment: .leading, spacing: 6) { meters(recording: recording) }
+            }
+        } else if Platform.isMac, !monitor {
+            Button {
+                monitor = true
+            } label: {
+                Label("Show live input levels", systemImage: "waveform")
+            }
+            .buttonStyle(.borderless)
+            .font(.footnote)
+            .help("Keep the microphone and call-audio meters running, so you can check what Sintr hears before you record.")
+        } else if !hub.micName.isEmpty {
+            Label(hub.micName, systemImage: "mic.slash")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private func meters(recording: Bool) -> some View {
+        let labels = recordingLabels ?? []
+        InputMeter(
+            icon: "mic.fill",
+            label: labels.contains("Me") ? "Me" : nil,
+            name: hub.micName.isEmpty ? "Microphone" : hub.micName,
+            level: hub.micLevel,
+            status: hub.micRunning ? (hub.micHearing ? nil : "quiet") : "off",
+            warning: !hub.micRunning)
+        #if os(macOS)
+        if hub.callState != .off {
+            InputMeter(
+                icon: "speaker.wave.2.fill",
+                label: labels.contains("Them") ? "Them" : nil,
+                name: hub.callName,
+                level: hub.callLevel,
+                status: callStatus,
+                warning: hub.callState == .notAllowed)
+        }
+        #endif
+    }
+
+    private var callStatus: String? {
+        switch hub.callState {
+        case .off: "off"
+        case .notAllowed: "not allowed"
+        case .waiting(let app): "waiting for \(app)"
+        case .silent: "quiet"
+        case .hearing: nil
+        }
+    }
+}
+
+struct InputMeter: View {
+    let icon: String
+    let label: String?
+    let name: String
+    let level: Float
+    let status: String?
+    var warning = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .foregroundStyle(warning ? Color.orange : .secondary)
+                .frame(width: 16)
+            if let label {
+                Text(label).font(.caption.weight(.bold)).foregroundStyle(.secondary)
+            }
+            Text(name)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 170, alignment: .leading)
+            LevelBar(level: level)
+            if let status {
+                Text(status)
+                    .font(.caption2)
+                    .foregroundStyle(warning ? Color.orange : .secondary)
+            }
+        }
+        .help(name)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label ?? name) level\(status.map { ", \($0)" } ?? "")")
+    }
+}
+
+/// A horizontal level meter: green, then yellow, then red near the top.
+struct LevelBar: View {
+    let level: Float
+    private let segments = 14
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(0..<segments, id: \.self) { index in
+                let lit = Float(index) / Float(segments) < level
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(lit ? color(index) : Color.secondary.opacity(0.2))
+                    .frame(width: 5, height: 10)
+            }
+        }
+        .animation(.linear(duration: 0.08), value: level)
+    }
+
+    private func color(_ index: Int) -> Color {
+        let position = Double(index) / Double(segments)
+        return position > 0.85 ? .red : (position > 0.65 ? .yellow : .green)
     }
 }
 
@@ -318,26 +491,3 @@ struct MeetingAudioPicker: View {
     }
 }
 #endif
-
-struct LevelMeter: View {
-    let label: String?
-    let level: Float
-
-    var body: some View {
-        HStack(spacing: 5) {
-            if let label {
-                Text(label).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            }
-            HStack(spacing: 2) {
-                ForEach(0..<6, id: \.self) { index in
-                    Capsule()
-                        .fill(Float(index) / 6 < level ? Color.green : Color.secondary.opacity(0.25))
-                        .frame(width: 4, height: 6 + CGFloat(index) * 2.5)
-                }
-            }
-            .frame(height: 20, alignment: .bottom)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(label ?? "Microphone") level")
-    }
-}

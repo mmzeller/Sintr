@@ -3,8 +3,10 @@ import SwiftUI
 @main
 struct SintrApp: App {
     @State private var store = NoteStore()
-    @State private var recorder = Recorder()
-    @State private var importer = Importer()
+    @State private var hub: AudioHub
+    @State private var post: PostProcessor
+    @State private var recorder: Recorder
+    @State private var importer: Importer
     @State private var appState = AppState()
     @State private var templates = TemplateStore()
     @Environment(\.scenePhase) private var scenePhase
@@ -16,6 +18,13 @@ struct SintrApp: App {
         #if os(macOS)
         StorageCheck.runIfRequested()
         #endif
+        ActivityLog.startSession()
+        let hub = AudioHub()
+        let post = PostProcessor()
+        _hub = State(initialValue: hub)
+        _post = State(initialValue: post)
+        _recorder = State(initialValue: Recorder(hub: hub, post: post))
+        _importer = State(initialValue: Importer(post: post))
     }
 
     var body: some Scene {
@@ -31,9 +40,16 @@ struct SintrApp: App {
             SettingsView()
                 .environment(store)
                 .environment(recorder)
+                .environment(hub)
+                .environment(post)
                 .environment(templates)
-                .frame(width: 620, height: 720)
+                .frame(width: 620, height: 760)
         }
+
+        Window("Activity Log", id: ActivityLogView.windowID) {
+            ActivityLogView()
+        }
+        .defaultSize(width: 760, height: 520)
         #else
         WindowGroup {
             root
@@ -45,9 +61,12 @@ struct SintrApp: App {
         ContentView()
             .environment(store)
             .environment(recorder)
+            .environment(hub)
+            .environment(post)
             .environment(importer)
             .environment(appState)
             .environment(templates)
+            .task { await hub.startMonitoringIfWanted() }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { store.saveNow() }
             }
@@ -78,6 +97,7 @@ struct SintrCommands: Commands {
     let store: NoteStore
     let recorder: Recorder
     let appState: AppState
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -105,7 +125,10 @@ struct SintrCommands: Commands {
                 }
             }
             .keyboardShortcut("r", modifiers: [.command, .shift])
-            .disabled(recorder.isFinishing)
+            .disabled(recorder.isFinishing || (!recorder.isRecording && recorder.isActive))
+        }
+        CommandGroup(after: .help) {
+            Button("Activity Log…") { openWindow(id: ActivityLogView.windowID) }
         }
     }
 }

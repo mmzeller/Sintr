@@ -15,6 +15,9 @@ final class MicCapture: @unchecked Sendable {
     /// whether it could resume.
     var onInterruption: ((_ resumed: Bool) -> Void)?
 
+    /// The name of the microphone in use right now.
+    var deviceName: String? { Self.currentDeviceName(engine.inputNode) }
+
     static func requestPermission() async -> Bool {
         #if os(iOS)
         return await AVAudioApplication.requestRecordPermission()
@@ -37,9 +40,10 @@ final class MicCapture: @unchecked Sendable {
     func stop() {
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         observers.removeAll()
+        handler = nil
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        handler = nil
+        ActivityLog.add("Microphone: stopped")
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
@@ -50,19 +54,59 @@ final class MicCapture: @unchecked Sendable {
         input.removeTap(onBus: 0)
         #if os(macOS)
         // Use the microphone chosen in Settings, if it's connected.
-        if let device = MicDevices.deviceID(forUID: AppSettings.microphoneDeviceUID), let unit = input.audioUnit {
+        let chosen = AppSettings.microphoneDeviceUID
+        if let device = MicDevices.deviceID(forUID: chosen), let unit = input.audioUnit {
             var id = device
-            AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
-                                 &id, UInt32(MemoryLayout<AudioDeviceID>.size))
+            let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                              &id, UInt32(MemoryLayout<AudioDeviceID>.size))
+            if status != noErr { ActivityLog.add("Microphone: couldn't switch to the chosen microphone (\(status))") }
+        } else if !chosen.isEmpty {
+            ActivityLog.add("Microphone: the chosen microphone isn't connected; using the system default")
         }
         #endif
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else { throw SpeechError.noMicrophone }
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
-            self?.handler?(buffer)
+        let format = input.inputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            ActivityLog.add("Microphone: no usable input device (format \(AudioPipe.describe(format)))")
+            throw SpeechError.noMicrophone
+        }
+        ActivityLog.add("Microphone: \(Self.currentDeviceName(input) ?? "input") — \(AudioPipe.describe(format))")
+        // No format given: the tap uses whatever the device delivers, which avoids the
+        // "format mismatch" crash when a device changes underneath us. The handler is captured
+        // directly (not read from `self` on the audio thread while `stop()` clears it).
+        guard let handler else { return }
+        input.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
+            handler(buffer)
         }
         engine.prepare()
         try engine.start()
+    }
+
+    private static func currentDeviceName(_ input: AVAudioInputNode) -> String? {
+        #if os(macOS)
+        guard let unit = input.audioUnit else { return nil }
+        var device = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &device, &size) == noErr
+        else { return nil }
+        return MicDevices.name(forDevice: device)
+        #else
+        return AVAudioSession.sharedInstance().currentRoute.inputs.first?.portName
+        #endif
+    }
+
+    /// After a device change: try again a few times (a Bluetooth headset can take a moment).
+    private func restartAfterChange(attempt: Int = 1) {
+        guard handler != nil else { return }
+        do {
+            try installTapAndStart()
+            ActivityLog.add("Microphone: restarted after a device change")
+        } catch {
+            ActivityLog.add("Microphone: restart attempt \(attempt) failed (\(error.localizedDescription))")
+            guard attempt < 5 else { onInterruption?(false); return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                self?.restartAfterChange(attempt: attempt + 1)
+            }
+        }
     }
 
     private func observeChanges() {
@@ -73,7 +117,8 @@ final class MicCapture: @unchecked Sendable {
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in
             guard let self, self.handler != nil else { return }
-            try? self.installTapAndStart()
+            ActivityLog.add("Microphone: audio devices changed")
+            self.restartAfterChange()
         })
         #if os(iOS)
         observers.append(center.addObserver(
@@ -130,6 +175,10 @@ enum MicDevices {
 
     static func name(forUID uid: String) -> String? {
         all().first { $0.uid == uid }?.name
+    }
+
+    static func name(forDevice id: AudioDeviceID) -> String? {
+        read(id, kAudioObjectPropertyName).map { $0 as String }
     }
 
     private static func deviceIDs() -> [AudioDeviceID] {
