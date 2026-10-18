@@ -9,6 +9,10 @@ struct SintrApp: App {
     @State private var importer: Importer
     @State private var appState = AppState()
     @State private var templates = TemplateStore()
+    @State private var askStore = AskStore()
+    #if os(macOS)
+    @State private var localAPI = LocalAPIServer()
+    #endif
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -17,6 +21,9 @@ struct SintrApp: App {
         SpeakerDetector.blockNetwork()
         #if os(macOS)
         StorageCheck.runIfRequested()
+        // Command-line uses of the same app: these never open a window and exit when done.
+        MCPServer.runIfRequested()
+        SintrCommandLine.runIfRequested()
         #endif
         ActivityLog.startSession()
         let hub = AudioHub()
@@ -43,8 +50,20 @@ struct SintrApp: App {
                 .environment(hub)
                 .environment(post)
                 .environment(templates)
-                .frame(width: 620, height: 760)
+                .environment(localAPI)
+                .frame(width: 640, height: 780)
         }
+
+        Window("Ask Sintr", id: "ask") {
+            NavigationStack {
+                LibraryAskView()
+            }
+            .environment(store)
+            .environment(askStore)
+            .environment(appState)
+            .frame(minWidth: 520, minHeight: 480)
+        }
+        .defaultSize(width: 720, height: 720)
 
         Window("Activity Log", id: ActivityLogView.windowID) {
             ActivityLogView()
@@ -66,6 +85,11 @@ struct SintrApp: App {
             .environment(importer)
             .environment(appState)
             .environment(templates)
+            .environment(askStore)
+            #if os(macOS)
+            .environment(localAPI)
+            .task { localAPI.attach(store) }
+            #endif
             .task { await hub.startMonitoringIfWanted() }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { store.saveNow() }
@@ -83,12 +107,45 @@ final class AppState {
     var showSettings = false
     var enhanceNoteID: UUID?
     var translateNoteID: UUID?
+    /// iPhone: Ask Sintr is showing.
+    var showAsk = false
+    /// Which notes the list shows.
+    var folderFilter: FolderFilter = .all
+    /// Sending a note to another app.
+    var sendRequest: SendRequest?
+    /// Picking a place for a shared folder.
+    var folderPick: FolderPick?
+    var folderError: String?
+
+    struct SendRequest: Identifiable {
+        let id = UUID()
+        let noteID: UUID
+        let kind: IntegrationKind
+    }
+
+    enum FolderPick: Equatable {
+        case share(UUID)
+        case open
+    }
+
+    enum FolderFilter: Hashable {
+        case all
+        case unfiled
+        case folder(UUID)
+    }
 
     struct ExportRequest: Identifiable {
         let id = UUID()
-        /// nil means every note.
+        /// nil means every note (or every note in `folderID`).
         let noteID: UUID?
+        var folderID: UUID?
         var format: ExportFormat = .markdown
+
+        init(noteID: UUID?, folderID: UUID? = nil, format: ExportFormat = .markdown) {
+            self.noteID = noteID
+            self.folderID = folderID
+            self.format = format
+        }
     }
 }
 
@@ -111,6 +168,9 @@ struct SintrCommands: Commands {
                 .keyboardShortcut("o")
             Button("Export All Notes…") { appState.exportRequest = .init(noteID: nil) }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
+            Divider()
+            Button("Ask About Your Notes…") { openWindow(id: "ask") }
+                .keyboardShortcut("j")
         }
         CommandMenu("Recording") {
             Button(recorder.isRecording ? "Stop Recording" : "Start Recording") {

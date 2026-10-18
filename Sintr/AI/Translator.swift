@@ -19,7 +19,7 @@ enum TranslateEngine: String, CaseIterable, Identifiable {
         switch self {
         case .apple: "Apple Translate"
         case .appleIntelligence: "Apple Intelligence"
-        case .phone: "Phone model"
+        case .phone: "Local model"
         case .claude: "Claude"
         }
     }

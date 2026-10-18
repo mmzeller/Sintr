@@ -58,6 +58,9 @@ final class Importer {
         }
         let data = try Data(contentsOf: url)
         if url.pathExtension.lowercased() == "json" {
+            if let setup = SetupProfile.decode(data) {
+                return "\(url.lastPathComponent): \(setup.apply())"
+            }
             let notes: [Note]
             if let archive = try? NoteArchive.decoder.decode(NoteArchive.self, from: data) {
                 notes = archive.notes

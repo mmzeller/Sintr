@@ -17,8 +17,17 @@ struct SettingsView: View {
     @AppStorage(AppSettings.phoneModel) private var phoneModelRaw = PhoneModelChoice.defaultChoice.rawValue
     @AppStorage(AppSettings.monitorLevels) private var monitorLevels = true
     @AppStorage(AppSettings.removeEcho) private var removeEcho = true
+    @AppStorage(AppSettings.claudeEffort) private var claudeEffort = ClaudeEffort.modelDefault.rawValue
+    @AppStorage(AppSettings.notesLanguage) private var notesLanguage = ""
     #if os(macOS)
     @Environment(\.openWindow) private var openWindow
+    @Environment(LocalAPIServer.self) private var localAPI
+    @AppStorage(AppSettings.allowAIApps) private var allowAIApps = false
+    @AppStorage(AppSettings.localAPI) private var localAPIOn = false
+    @AppStorage(AppSettings.localAPIPort) private var localAPIPort = 52817
+    @State private var apiToken = ""
+    @State private var showToken = false
+    @State private var connectMessage: String?
     #endif
 
     @State private var locales: [Locale] = []
@@ -38,6 +47,7 @@ struct SettingsView: View {
     @State private var speakerDownload: Double?
     @State private var speakerError: String?
     @State private var editingTemplate: NoteTemplate?
+    @State private var setupFile: URL?
     #if os(macOS)
     @State private var permission = SystemAudioPermission.status
     @State private var microphones: [MicDevices.Device] = []
@@ -58,6 +68,9 @@ struct SettingsView: View {
             glossarySection
             phoneModelSection
             claudeSection
+            IntegrationsSettingsSection()
+            connectionsSection
+            teamSetupSection
             troubleshootingSection
             aboutSection
         }
@@ -83,7 +96,7 @@ struct SettingsView: View {
     private var privacySection: some View {
         Section {
             Label {
-                Text("Your notes, transcripts and recordings stay on this \(Platform.deviceName). Sintr only uses the internet when you tap **Send to Claude**, **Share**, or **Download** below — and for nothing else.")
+                Text("Your notes, transcripts and recordings stay on this \(Platform.deviceName). Sintr only uses the internet when you choose Claude, **Send to…** an app, **Share**, or **Download** below — and for nothing else. No account, and nothing is ever used to train AI: Apple Intelligence and the local model run on this \(Platform.deviceName), and Anthropic doesn't train on what its API receives without your express permission.")
             } icon: {
                 Image(systemName: "lock.shield").foregroundStyle(.green)
             }
@@ -127,6 +140,12 @@ struct SettingsView: View {
                 Text("Automatic (this \(Platform.deviceName)'s language)").tag("")
                 ForEach(locales, id: \.identifier) { locale in
                     Text(SpeechSupport.displayName(locale)).tag(locale.identifier)
+                }
+            }
+            Picker("Write enhanced notes in", selection: $notesLanguage) {
+                Text("The meeting's language").tag("")
+                ForEach(NotesLanguage.choices, id: \.self) { code in
+                    Text(NotesLanguage.name(code)).tag(code)
                 }
             }
             if !SpeechSupport.deviceSupported {
@@ -282,7 +301,7 @@ struct SettingsView: View {
         Section {
             if PhoneModelGenerator.isBuiltIn {
                 Picker("Model", selection: $phoneModelRaw) {
-                    ForEach(PhoneModelChoice.allCases) { choice in
+                    ForEach(PhoneModelChoice.available) { choice in
                         Text(choice.title).tag(choice.rawValue)
                     }
                 }
@@ -313,9 +332,11 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         } header: {
-            Text("Phone model")
+            Text("Local model")
         } footer: {
-            Text("A small open model that runs on this \(Platform.deviceName) for Enhance, with no internet needed after the download. It works on an iPhone 12, but it's slower and less polished than Apple Intelligence or Claude.")
+            Text(Platform.isMac
+                 ? "An open model that runs on this Mac for Enhance and Ask, with no internet needed after the download. The bigger Qwen3 models are the most capable that stay on your Mac; they think step by step when you ask them to."
+                 : "A small open model that runs on this iPhone for Enhance and Ask, with no internet needed after the download. It works on an iPhone 12, but it's slower and less polished than Apple Intelligence or Claude.")
         }
         .id(refresh)
     }
@@ -344,22 +365,132 @@ struct SettingsView: View {
                 }
                 .disabled(apiKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            TextField("Model", text: $claudeModel)
-                .autocorrectionDisabled()
-                #if os(iOS)
-                .textInputAutocapitalization(.never)
-                #endif
-            Menu("Choose a model") {
-                Button("Claude Sonnet 5.5 (recommended)") { claudeModel = "claude-sonnet-5-5" }
-                Button("Claude Opus 5.5 (most capable, slower)") { claudeModel = "claude-opus-5-5" }
-                Button("Claude Haiku 5.5 (fastest, cheapest)") { claudeModel = "claude-haiku-5-5" }
+            Picker("Model", selection: $claudeModel) {
+                ForEach(ClaudeModels.choices, id: \.id) { choice in
+                    Text(choice.title).tag(choice.id)
+                }
+                if !ClaudeModels.choices.contains(where: { $0.id == claudeModel }) {
+                    Text(claudeModel.isEmpty ? "Default" : claudeModel).tag(claudeModel)
+                }
+            }
+            if let detail = ClaudeModels.choices.first(where: { $0.id == claudeModel })?.detail {
+                Text(detail).font(.footnote).foregroundStyle(.secondary)
+            }
+            Picker("Thinking", selection: $claudeEffort) {
+                ForEach(ClaudeEffort.allCases) { effort in
+                    Text(effort.title).tag(effort.rawValue)
+                }
+            }
+            DisclosureGroup("Use another model ID") {
+                TextField("Model ID", text: $claudeModel)
+                    .autocorrectionDisabled()
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    #endif
             }
         } header: {
             Text("Claude")
         } footer: {
-            Text("Used only when you tap Send to Claude and confirm. Get a key at console.anthropic.com — it's billed per use and is separate from a Claude.ai subscription. The key is kept in this \(Platform.deviceName)'s Keychain.")
+            Text("Used only when you choose Claude for Enhance, Ask or Translate. Claude thinks before it answers; “Thinking” sets how much — more is slower and costs more. Get a key at console.anthropic.com — it's billed per use and is separate from a Claude.ai subscription. The key is kept in this \(Platform.deviceName)'s Keychain.")
         }
     }
+
+    private var teamSetupSection: some View {
+        Section {
+            if let setupFile {
+                ShareLink(item: setupFile) {
+                    Label("Share your setup…", systemImage: "person.2.badge.gearshape")
+                }
+            }
+        } header: {
+            Text("Team setup")
+        } footer: {
+            Text("A file with your templates, names and terms, recording defaults, notes language, AI choices and integration targets — never keys, tokens or notes. Teammates open it with Import… to get the same setup. Send an updated file whenever the team's setup changes.")
+        }
+        .onAppear { setupFile = SetupProfile.exportFile(templates: templates.templates) }
+    }
+
+    @ViewBuilder private var connectionsSection: some View {
+        #if os(macOS)
+        Section {
+            Toggle("Let AI apps read my notes (MCP)", isOn: $allowAIApps)
+            if allowAIApps {
+                HStack {
+                    Button("Add to Claude Desktop") { addToClaudeDesktop() }
+                    Button("Copy Claude Code command") {
+                        Clipboard.copy("claude mcp add sintr -- \"\(Self.executablePath)\" --mcp")
+                        connectMessage = "Copied. Paste it into Terminal."
+                    }
+                    Button("Copy MCP config") {
+                        Clipboard.copy(NoteLibrary.json(["mcpServers": ["sintr": ["command": Self.executablePath, "args": ["--mcp"]]]]))
+                        connectMessage = "Copied the JSON for any MCP-capable app."
+                    }
+                }
+                if let connectMessage {
+                    Text(connectMessage).font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            Toggle("Local API on this Mac", isOn: $localAPIOn)
+            if localAPIOn {
+                LabeledContent("Status", value: localAPI.status)
+                TextField("Port", value: $localAPIPort, format: .number.grouping(.never))
+                LabeledContent("Token") {
+                    HStack {
+                        Text(showToken ? apiToken : String(repeating: "•", count: 20))
+                            .font(.callout.monospaced())
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Button(showToken ? "Hide" : "Show") { showToken.toggle() }
+                        Button("Copy") { Clipboard.copy(apiToken) }
+                        Button("New") { apiToken = LocalAPIServer.regenerateToken() }
+                    }
+                }
+                Button("Copy an example request") {
+                    Clipboard.copy("curl -H \"Authorization: Bearer \(apiToken)\" \"http://127.0.0.1:\(localAPIPort)/v1/notes?since=7d\"")
+                }
+            }
+            LabeledContent("Command line") {
+                Button("Copy example") {
+                    Clipboard.copy("\"\(Self.executablePath)\" --cli search budget")
+                }
+            }
+        } header: {
+            Text("Connections")
+        } footer: {
+            Text("All three are read-only and stay on this Mac. MCP lets Claude Desktop, Claude Code and other AI apps search and read your notes when you ask them to — what they do with an answer is up to that app. The local API answers only this Mac, needs the token, and runs while Sintr is open: GET /v1/notes, /v1/notes/{id}, /v1/search?q=, /v1/folders. The command line (--cli list, search, get, folders) is for scripts.")
+        }
+        .onAppear { apiToken = LocalAPIServer.token }
+        #endif
+    }
+
+    #if os(macOS)
+    private static var executablePath: String { Bundle.main.executableURL?.path ?? "/Applications/Sintr.app/Contents/MacOS/Sintr" }
+
+    private func addToClaudeDesktop() {
+        let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Claude")
+        let file = folder.appendingPathComponent("claude_desktop_config.json")
+        var config: [String: Any] = [:]
+        if let data = try? Data(contentsOf: file), !data.isEmpty {
+            guard let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                connectMessage = "Claude Desktop's settings file couldn't be read, so it wasn't changed. Use “Copy MCP config” and add it by hand."
+                return
+            }
+            config = parsed
+        }
+        var servers = config["mcpServers"] as? [String: Any] ?? [:]
+        servers["sintr"] = ["command": Self.executablePath, "args": ["--mcp"]]
+        config["mcpServers"] = servers
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let data = try JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+            try data.write(to: file, options: .atomic)
+            connectMessage = "Added. Quit and reopen Claude Desktop, then ask it about your meetings."
+        } catch {
+            connectMessage = "Couldn't update Claude Desktop's settings: \(error.localizedDescription)"
+        }
+    }
+    #endif
 
     private var troubleshootingSection: some View {
         Section {

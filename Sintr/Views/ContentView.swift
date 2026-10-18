@@ -7,6 +7,8 @@ struct ContentView: View {
     @Environment(AppState.self) private var appState
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
     @State private var showStorageWarning = Storage.current.warning != nil
+    /// The shared-folder action the file picker is open for (kept after the picker closes).
+    @State private var activePick: AppState.FolderPick?
 
     var body: some View {
         @Bindable var appState = appState
@@ -24,10 +26,28 @@ struct ContentView: View {
             }
         }
         .fileImporter(
-            isPresented: $appState.showImporter,
-            allowedContentTypes: Importer.types,
-            allowsMultipleSelection: true
+            isPresented: Binding(
+                get: { appState.showImporter || appState.folderPick != nil },
+                set: { if !$0 { appState.showImporter = false; appState.folderPick = nil } }),
+            allowedContentTypes: appState.folderPick == nil && activePick == nil ? Importer.types : [.folder],
+            allowsMultipleSelection: appState.folderPick == nil && activePick == nil
         ) { result in
+            if let pick = activePick {
+                activePick = nil
+                guard case .success(let urls) = result, let url = urls.first else { return }
+                do {
+                    switch pick {
+                    case .share(let id):
+                        try store.share(id, at: url)
+                    case .open:
+                        let folder = try store.openSharedFolder(at: url)
+                        appState.folderFilter = .folder(folder.id)
+                    }
+                } catch {
+                    appState.folderError = error.localizedDescription
+                }
+                return
+            }
             guard case .success(let urls) = result, !urls.isEmpty else { return }
             Task {
                 await importer.importFiles(urls, into: store)
@@ -36,8 +56,32 @@ struct ContentView: View {
                 }
             }
         }
+        .onChange(of: appState.folderPick) { _, pick in
+            if let pick { activePick = pick }
+        }
+        .onChange(of: appState.showImporter) { _, showing in
+            if showing { activePick = nil }
+        }
+        .alert("Folder problem", isPresented: Binding(
+            get: { appState.folderError != nil },
+            set: { if !$0 { appState.folderError = nil } }
+        )) {
+            Button("OK") { appState.folderError = nil }
+        } message: {
+            Text(appState.folderError ?? "")
+        }
+        #if os(iOS)
+        .sheet(isPresented: $appState.showAsk) {
+            NavigationStack {
+                LibraryAskView()
+            }
+        }
+        #endif
         .sheet(item: $appState.exportRequest) { request in
             ExportSheet(request: request)
+        }
+        .sheet(item: $appState.sendRequest) { request in
+            SendSheet(noteID: request.noteID, kind: request.kind)
         }
         .sheet(isPresented: $appState.showSettings) {
             NavigationStack {
@@ -106,7 +150,7 @@ struct ContentView: View {
         } message: {
             Text(Storage.current.warning ?? "")
         }
-        .alert("Couldn't save", isPresented: Binding(
+        .alert("Sintr", isPresented: Binding(
             get: { store.lastError != nil },
             set: { if !$0 { store.lastError = nil } }
         )) {
@@ -141,6 +185,9 @@ private struct EmptyDetailView: View {
     @Environment(NoteStore.self) private var store
     @Environment(Recorder.self) private var recorder
     @Environment(AppState.self) private var appState
+    #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    #endif
 
     var body: some View {
         VStack(spacing: 18) {
@@ -170,6 +217,18 @@ private struct EmptyDetailView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
                 .disabled(recorder.isActive)
+                if !store.notes.isEmpty {
+                    Button {
+                        #if os(macOS)
+                        openWindow(id: "ask")
+                        #else
+                        appState.showAsk = true
+                        #endif
+                    } label: {
+                        Label("Ask about your notes", systemImage: "bubble.left.and.text.bubble.right")
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
             .controlSize(.large)
             PostProcessingRow(noteID: nil)

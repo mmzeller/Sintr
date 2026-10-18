@@ -69,8 +69,13 @@ final class TemplateStore {
 
     private var fileURL: URL { Storage.root.appendingPathComponent("Templates.json") }
 
+    @ObservationIgnored private var observer: NSObjectProtocol?
+
     init() {
         load()
+        observer = NotificationCenter.default.addObserver(forName: .sintrSetupImported, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.load() }
+        }
     }
 
     func load() {

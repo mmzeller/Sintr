@@ -124,6 +124,11 @@ jobs:
           grep -qxF "root=$HOME/Library/Application Support/Sintr" <<<"$OUT"
           grep -qx "portable=false" <<<"$OUT"
 
+      - name: Check the command line and the MCP server
+        if: always()
+        shell: bash
+        run: bash scripts/ci-connect-check.sh "build/portable/Build/Products/Release/Sintr.app"
+
       - name: Try it on an exFAT "thumb drive" (disk image)
         if: always()
         shell: bash

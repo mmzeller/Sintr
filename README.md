@@ -10,6 +10,10 @@ Private meeting notes for iPhone and Mac, in the spirit of Granola — but every
 - **Enhance** turns your rough notes plus the transcript into clean notes using a template (meeting notes, voice memo, to-do list, interview, lecture, 1:1, or your own). You pick where that happens.
 - **Translate** notes or transcripts into other languages, on the device or with Claude.
 - **Names and terms:** list the people and jargon in your meetings so Enhance and Translate spell them right.
+- **Ask:** chat with one note (“what did I commit to?”, “draft the follow-up email”) or across all of them (“what did we decide about the budget last week?”), with links back to the notes each answer came from.
+- **Folders and shared folders:** organize notes in folders. Put a folder in OneDrive, iCloud Drive, Dropbox or a network share and everyone who opens it in Sintr works on the same notes — no Sintr account or server.
+- **Integrations:** send a note to Notion, HubSpot, Attio, Affinity, or anywhere through a Zapier / Make / n8n / Power Automate webhook.
+- **AI apps and scripts (Mac):** an MCP server lets Claude Desktop, Claude Code and other AI apps read your notes when you allow it; a local API and a command line give scripts read-only access.
 - **Import and export** Markdown, plain text, Sintr backups and audio files. Notes are plain Markdown when exported, so Nextpad++ (and Parakeet) can open them.
 
 The options Parakeet shows next to its Record button — meeting audio, detect speakers, save audio, language — sit right under Sintr's Record button. Everything else is in **Settings** (the gear in the toolbar, or Sintr → Settings… / ⌘,).
@@ -24,10 +28,36 @@ The options Parakeet shows next to its Record button — meeting audio, detect s
 | Enhance with the phone model | Your device | Only a one-time model download from Hugging Face, when you tap Download |
 | Detect speakers | Your device (open FluidAudio models) | Only a one-time download (a few dozen MB) from Hugging Face, when you agree |
 | Translate with Apple Translate | Your device | Only a one-time language download from Apple |
-| Send to Claude (Enhance or Translate) | Anthropic's Claude API | Yes — only when you choose it and confirm |
+| Ask with Apple Intelligence or the local model | Your device (search is on-device too) | No |
+| Claude (Enhance, Ask or Translate) | Anthropic's Claude API | Yes — only when you choose Claude |
+| Send to Notion / HubSpot / Attio / Affinity / webhook | That app | Yes — when you press Send, or after Enhance if you turned that on for Notion or a webhook |
+| Shared folders | The folder you chose | Only through whatever syncs that folder (OneDrive, iCloud…) |
+| MCP server, local API, command line (Mac) | Your Mac (local API: 127.0.0.1 only, token required) | No — what an AI app does with an answer is up to that app |
 | Share / Export | Wherever you send it (AirDrop goes directly between devices) | Depends on where you send it |
 
-Notes live in Sintr's private folder on each device. On iPhone they're kept out of iCloud and computer backups unless you turn that on in Settings. There is no sync: move notes between devices with **Export → Sintr backup** and **Import**.
+Notes live in Sintr's private folder on each device (or in a shared folder you chose). On iPhone they're kept out of iCloud and computer backups unless you turn that on in Settings. Sintr has no sync service of its own: move notes between devices with **Export → Sintr backup** and **Import**, or keep them in a shared folder.
+
+Nothing is used to train AI. Apple Intelligence and the local model run on your device; Anthropic doesn't use what its API receives for training without your express permission.
+
+## Sintr compared with Granola
+
+Granola's Basic and Business plans list these features. Here's where each one is in Sintr — no account, no subscription.
+
+| Granola | Sintr |
+|---|---|
+| AI meeting notes | **Enhance** with templates — on your device (Apple Intelligence or a local model) or with Claude |
+| Meeting history (limited on Basic) | Unlimited — every note stays until you delete it |
+| AI chat within and across meetings | **Ask** tab on each note; **Ask Sintr** (⌘J) across all notes, with links to the notes each answer used. Works offline with Apple Intelligence or the local model |
+| Shared folders for collaboration | **Folders**; **Share…** puts a folder in OneDrive, iCloud Drive, Dropbox or a network share for your team. Edits merge; if two people change the same note at once, both versions are kept |
+| Customized note templates | Built-in templates you can edit, plus your own (Settings → Templates) |
+| Multi-language support | Transcription in Apple's supported languages, **Write enhanced notes in** any language, Translate, and Ask answers in the language you ask in |
+| Opt out of model training | Nothing to opt out of: Sintr never trains on your notes |
+| Unlimited meeting notes and history | ✓ |
+| Advanced AI thinking models | Claude Opus 5.5, Fable 5.1, Sonnet 5.5 or Haiku 5.5 with a **Thinking** level (Settings → Claude); on the Mac, Qwen3 4B / 8B as the most capable models that never leave it |
+| Integrations with Attio, Notion, HubSpot, Affinity, Zapier | **Share → Send to…** Notion, HubSpot, Attio, Affinity, or a webhook for Zapier, Make, n8n or Power Automate (Settings → Integrations). Notion and webhooks can receive notes automatically after Enhance |
+| Centralized billing & user management | No billing or accounts to manage. **Settings → Team setup → Share your setup…** gives teammates the same templates, names and terms, defaults and integration targets |
+| MCP integration in all your apps | Built-in MCP server on the Mac (Settings → Connections): one click adds it to Claude Desktop; works with Claude Code and other MCP apps. Read-only and off until you turn it on |
+| API access | Local read-only API on the Mac (`/v1/notes`, `/v1/notes/{id}`, `/v1/search`, `/v1/folders`, token required) and a command line (`Sintr --cli list / search / get / folders`) |
 
 ## What works where
 
@@ -40,6 +70,9 @@ Notes live in Sintr's private folder on each device. On iPhone they're kept out 
 | Enhance with Apple Intelligence | — (needs iPhone 15 Pro or newer) | ✓ |
 | Enhance with the phone model | ✓ (slower) | ✓ |
 | Send to Claude / Share | ✓ | ✓ |
+| Ask (one note or all notes) | ✓ (local model or Claude) | ✓ (also Apple Intelligence) |
+| Folders, shared folders, integrations | ✓ | ✓ |
+| MCP server, local API, command line | — | ✓ |
 
 Needs iOS 26 or macOS 26, and Xcode 26 or newer on the Mac.
 
@@ -121,6 +154,33 @@ Replace `YOURDRIVE` with your thumb drive's name — or type `bash ~/Sintr/make-
 - Back up the Sintr Data folder now and then. If the drive is lost or fails, so are the notes on it.
 
 The iPhone app isn't affected; this is only for the Mac.
+
+## Connecting AI apps and scripts (Mac)
+
+In **Settings → Connections**:
+
+- **Let AI apps read my notes (MCP)**, then **Add to Claude Desktop** (quit and reopen Claude Desktop afterwards). For Claude Code, **Copy Claude Code command** and paste it into Terminal. Other MCP apps: **Copy MCP config**. The AI app can search notes, list them, read one, and list folders — nothing else.
+- **Local API on this Mac**: turn it on, copy the token, and call it from scripts while Sintr is open:
+
+  ```
+  curl -H "Authorization: Bearer <token>" "http://127.0.0.1:52817/v1/notes?since=7d"
+  curl -H "Authorization: Bearer <token>" "http://127.0.0.1:52817/v1/search?q=budget"
+  curl -H "Authorization: Bearer <token>" "http://127.0.0.1:52817/v1/notes/<id>?transcript=true&format=markdown"
+  ```
+
+- **Command line** (works even when Sintr isn't open):
+
+  ```
+  /Applications/Sintr.app/Contents/MacOS/Sintr --cli search budget
+  /Applications/Sintr.app/Contents/MacOS/Sintr --cli list --since 7d --json
+  /Applications/Sintr.app/Contents/MacOS/Sintr --cli get <id> --transcript
+  ```
+
+## Shared folders
+
+1. Create a folder (⋯ → New folder…), then right-click it → **Share…** and pick a place your team can all reach — a OneDrive, Dropbox, Google Drive or iCloud Drive folder, or a network share.
+2. Teammates choose ⋯ → **Open shared folder…** and pick the same place.
+3. Everyone sees the same notes; Sintr checks for changes every 15 seconds. If two people change the same note at the same time, the later save is kept as “(conflict copy)” so nothing is lost. Audio recordings stay on the device that made them.
 
 ## If something goes wrong
 

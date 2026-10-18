@@ -99,6 +99,8 @@ enum PortableSettings {
         AppSettings.detectSpeakers, AppSettings.template, AppSettings.glossary,
         AppSettings.translateTarget, AppSettings.translateEngine,
         AppSettings.claudeModel, AppSettings.phoneModel, AppSettings.monitorLevels, AppSettings.removeEcho,
+        AppSettings.claudeEffort, AppSettings.askEngine, AppSettings.notesLanguage, AppSettings.allowAIApps,
+        AppSettings.localAPI, AppSettings.localAPIPort, AppSettings.integrations,
     ]
     nonisolated(unsafe) private static var observer: NSObjectProtocol?
     nonisolated(unsafe) private static var lastWritten: [String: Any] = [:]

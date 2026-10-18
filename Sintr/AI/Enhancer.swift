@@ -8,6 +8,34 @@ protocol TextGenerator: Sendable {
     /// About how many characters of transcript fit in one request.
     var chunkCharacters: Int { get }
     func generate(instructions: String, prompt: String, maxTokens: Int) async throws -> String
+    /// A conversation. `onText` gets the reply so far as it's written (all at once for
+    /// models that don't stream).
+    func chat(system: String, turns: [ChatTurn], maxTokens: Int,
+              onText: @escaping @Sendable (String) -> Void) async throws -> String
+}
+
+/// One message in a conversation sent to a model.
+struct ChatTurn: Sendable {
+    /// "user" or "assistant".
+    var role: String
+    var text: String
+}
+
+extension TextGenerator {
+    /// Models without a conversation API get the earlier turns written into the prompt.
+    func chat(system: String, turns: [ChatTurn], maxTokens: Int,
+              onText: @escaping @Sendable (String) -> Void) async throws -> String {
+        let prompt: String
+        if turns.count <= 1 {
+            prompt = turns.last?.text ?? ""
+        } else {
+            let earlier = turns.dropLast().map { "\($0.role == "user" ? "User" : "You"): \($0.text)" }.joined(separator: "\n\n")
+            prompt = "The conversation so far:\n\n\(earlier)\n\nNow answer this:\n\(turns.last?.text ?? "")"
+        }
+        let reply = Enhancer.clean(try await generate(instructions: system, prompt: prompt, maxTokens: maxTokens))
+        onText(reply)
+        return reply
+    }
 }
 
 struct EnhanceProgress: Sendable {
@@ -96,7 +124,7 @@ enum Enhancer {
         return """
             Title: \(note.displayTitle)
             Date: \(date)
-            \(glossaryLine)
+            \(glossaryLine)\(NotesLanguage.instruction)
             Use this layout:
             \(template.instructions)
 
@@ -168,5 +196,23 @@ enum EnhanceError: LocalizedError {
         case .unavailable(let why): why
         case .service(let message): message
         }
+    }
+}
+
+/// The language Enhance writes in (Settings → Transcription).
+enum NotesLanguage {
+    static let choices = ["en", "es", "fr", "de", "it", "pt", "nl", "sv", "da", "nb", "fi", "pl", "cs",
+                          "tr", "ru", "uk", "ar", "he", "hi", "ja", "ko", "zh-Hans", "zh-Hant", "vi", "th", "id"]
+
+    static func name(_ code: String) -> String {
+        Locale.current.localizedString(forIdentifier: code) ?? code
+    }
+
+    /// A line for prompts, or empty to write in the meeting's own language.
+    static var instruction: String {
+        let code = AppSettings.notesLanguageID
+        guard !code.isEmpty else { return "Write the notes in the same language as the transcript and notes.\n" }
+        let english = Locale(identifier: "en").localizedString(forIdentifier: code) ?? code
+        return "Write the notes in \(english), whatever language the meeting was in. Keep names as they are.\n"
     }
 }

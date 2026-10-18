@@ -13,8 +13,16 @@ enum PhoneModelChoice: String, CaseIterable, Identifiable, Sendable {
     case gemma1B
     case llama1B
     case qwen17B
+    /// Mac only: bigger models that are much more capable and still stay on the Mac.
+    case qwen4B
+    case qwen8B
 
     static let defaultChoice = PhoneModelChoice.gemma1B
+
+    /// The choices that fit this device.
+    static var available: [PhoneModelChoice] {
+        Platform.isMac ? allCases : [.gemma1B, .llama1B, .qwen17B]
+    }
 
     var id: String { rawValue }
 
@@ -23,6 +31,8 @@ enum PhoneModelChoice: String, CaseIterable, Identifiable, Sendable {
         case .gemma1B: "Gemma 3 1B (Google)"
         case .llama1B: "Llama 3.2 1B (Meta)"
         case .qwen17B: "Qwen3 1.7B (Alibaba)"
+        case .qwen4B: "Qwen3 4B (Alibaba)"
+        case .qwen8B: "Qwen3 8B (Alibaba)"
         }
     }
 
@@ -31,6 +41,8 @@ enum PhoneModelChoice: String, CaseIterable, Identifiable, Sendable {
         case .gemma1B: "Recommended. About 0.8 GB, quickest."
         case .llama1B: "About 0.7 GB."
         case .qwen17B: "About 1 GB. A little smarter, slower, tight on an iPhone 12."
+        case .qwen4B: "About 2.3 GB. Much better notes and answers; needs 8 GB of memory."
+        case .qwen8B: "About 4.6 GB. The most capable model that stays on your Mac; needs 16 GB of memory."
         }
     }
 
@@ -40,6 +52,8 @@ enum PhoneModelChoice: String, CaseIterable, Identifiable, Sendable {
         case .gemma1B: "mlx-community/gemma-3-1b-it-qat-4bit"
         case .llama1B: "mlx-community/Llama-3.2-1B-Instruct-4bit"
         case .qwen17B: "mlx-community/Qwen3-1.7B-4bit"
+        case .qwen4B: "mlx-community/Qwen3-4B-4bit"
+        case .qwen8B: "mlx-community/Qwen3-8B-4bit"
         }
     }
 
@@ -47,12 +61,21 @@ enum PhoneModelChoice: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .gemma1B: ["<end_of_turn>"]
         case .llama1B: ["<|eot_id|>"]
-        case .qwen17B: ["<|im_end|>"]
+        case .qwen17B, .qwen4B, .qwen8B: ["<|im_end|>"]
         }
     }
 
     static var selected: PhoneModelChoice {
-        PhoneModelChoice(rawValue: UserDefaults.standard.string(forKey: AppSettings.phoneModel) ?? "") ?? .defaultChoice
+        let choice = PhoneModelChoice(rawValue: UserDefaults.standard.string(forKey: AppSettings.phoneModel) ?? "") ?? .defaultChoice
+        return available.contains(choice) ? choice : .defaultChoice
+    }
+
+    /// How much text fits in one request.
+    var chunkCharacters: Int {
+        switch self {
+        case .qwen4B, .qwen8B: 16_000
+        default: 6_000
+        }
     }
 }
 
@@ -217,7 +240,7 @@ private struct LocalOnlyDownloader: MLXLMCommon.Downloader {
         progressHandler: @Sendable @escaping (Progress) -> Void
     ) async throws -> URL {
         guard ModelFiles.isDownloaded(id) else {
-            throw EnhanceError.unavailable("The phone model isn't downloaded yet. Download it in Settings → Phone model.")
+            throw EnhanceError.unavailable("The phone model isn't downloaded yet. Download it in Settings → Local model.")
         }
         return ModelFiles.directory(for: id)
     }
@@ -269,7 +292,7 @@ actor PhoneModelRuntime {
         container = nil
         loadedID = nil
         // Keep MLX's scratch memory small; an iPhone 12 has 4 GB in total.
-        Memory.cacheLimit = 20 * 1024 * 1024
+        Memory.cacheLimit = (Platform.isMac ? 256 : 20) * 1024 * 1024
         let configuration = ModelConfiguration(id: choice.repoID, extraEOSTokens: choice.stopTokens)
         let loaded = try await loadModelContainer(
             from: LocalOnlyDownloader(), using: TransformersTokenizerLoader(), configuration: configuration)
@@ -290,7 +313,7 @@ struct PhoneModelGenerator: TextGenerator {
     static let isBuiltIn = true
 
     var name: String { "\(choice.title) on this \(Platform.deviceName)" }
-    var chunkCharacters: Int { 6_000 }
+    var chunkCharacters: Int { choice.chunkCharacters }
 
     func generate(instructions: String, prompt: String, maxTokens: Int) async throws -> String {
         let container = try await PhoneModelRuntime.shared.container(for: choice)

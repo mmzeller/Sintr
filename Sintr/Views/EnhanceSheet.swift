@@ -173,7 +173,7 @@ struct EnhanceSheet: View {
     private var phoneModelUnavailable: String? {
         if !PhoneModelGenerator.isBuiltIn { return "Coming in the next update of Sintr." }
         if !ModelFiles.isDownloaded(phoneModel.repoID) {
-            return "Download \(phoneModel.title) in Settings → Phone model first (one time, from Hugging Face)."
+            return "Download \(phoneModel.title) in Settings → Local model first (one time, from Hugging Face)."
         }
         return nil
     }
@@ -231,6 +231,7 @@ struct EnhanceSheet: View {
                     note.enhancedAt = Date()
                 }
                 store.saveNow()
+                AutoSend.afterEnhance(noteID, store: store)
                 task = nil
                 progress = nil
                 dismiss()

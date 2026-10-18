@@ -19,12 +19,13 @@ struct NoteView: View {
         case myNotes = "My notes"
         case transcript = "Transcript"
         case enhanced = "Enhanced"
+        case ask = "Ask"
         case translations = "Translations"
         var id: String { rawValue }
     }
 
     private var tabs: [Tab] {
-        note.translations.isEmpty ? [.myNotes, .transcript, .enhanced] : Tab.allCases
+        note.translations.isEmpty ? [.myNotes, .transcript, .enhanced, .ask] : Tab.allCases
     }
 
     private var note: Note { store.note(noteID) ?? Note() }
@@ -67,6 +68,8 @@ struct NoteView: View {
                 TranscriptView(noteID: noteID)
             case .enhanced:
                 EnhancedView(noteID: noteID)
+            case .ask:
+                AskView(scope: .note(noteID))
             case .translations:
                 TranslationsView(noteID: noteID)
             }
@@ -101,6 +104,15 @@ struct NoteView: View {
                     }
                     Button("Copy as Markdown", systemImage: "doc.on.doc") {
                         Clipboard.copy(Exporter.markdown(note))
+                    }
+                    Menu("Send to", systemImage: "paperplane") {
+                        ForEach(IntegrationKind.allCases) { kind in
+                            Button(kind.title + (IntegrationSettings.isConfigured(kind) ? "" : " (set up in Settings)"),
+                                   systemImage: kind.systemImage) {
+                                appState.sendRequest = .init(noteID: noteID, kind: kind)
+                            }
+                            .disabled(!IntegrationSettings.isConfigured(kind))
+                        }
                     }
                     if !note.recordings.isEmpty {
                         Divider()

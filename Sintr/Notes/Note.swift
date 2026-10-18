@@ -89,6 +89,56 @@ struct NoteTranslation: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+/// A note an answer in Ask drew on.
+struct ChatSource: Codable, Hashable, Sendable {
+    var number: Int
+    var noteID: UUID
+    var title: String
+    var date: Date
+}
+
+/// One message in an Ask conversation.
+struct ChatMessage: Codable, Identifiable, Hashable, Sendable {
+    var id = UUID()
+    /// "user" or "assistant".
+    var role: String
+    var text: String
+    var sources: [ChatSource] = []
+    /// Which AI answered (assistant messages).
+    var by = ""
+    var created = Date()
+
+    init(role: String, text: String, sources: [ChatSource] = [], by: String = "") {
+        self.role = role
+        self.text = text
+        self.sources = sources
+        self.by = by
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        role = try c.decodeIfPresent(String.self, forKey: .role) ?? "user"
+        text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        sources = try c.decodeIfPresent([ChatSource].self, forKey: .sources) ?? []
+        by = try c.decodeIfPresent(String.self, forKey: .by) ?? ""
+        created = try c.decodeIfPresent(Date.self, forKey: .created) ?? Date()
+    }
+}
+
+/// A record of sending a note to another app (Notion, HubSpot…).
+struct NoteSend: Codable, Hashable, Sendable {
+    var destination: String
+    var date = Date()
+    /// A link to what was created there, when the app gives one.
+    var link: String?
+
+    init(destination: String, link: String? = nil) {
+        self.destination = destination
+        self.link = link
+    }
+}
+
 struct Note: Codable, Identifiable, Hashable, Sendable {
     var id = UUID()
     var title = ""
@@ -111,6 +161,12 @@ struct Note: Codable, Identifiable, Hashable, Sendable {
     /// Voice fingerprints for detected speakers, so the same voice keeps its label when you
     /// record more into this note.
     var voicePrints: [String: [Float]] = [:]
+    /// The folder this note is in (nil: not in a folder).
+    var folderID: UUID?
+    /// Questions asked about this note in Ask, and the answers.
+    var chat: [ChatMessage] = []
+    /// Where this note has been sent.
+    var sentTo: [NoteSend] = []
 
     init() {}
 
@@ -194,6 +250,9 @@ struct Note: Codable, Identifiable, Hashable, Sendable {
         speakerNames = try c.decodeIfPresent([String: String].self, forKey: .speakerNames) ?? [:]
         translations = try c.decodeIfPresent([NoteTranslation].self, forKey: .translations) ?? []
         voicePrints = try c.decodeIfPresent([String: [Float]].self, forKey: .voicePrints) ?? [:]
+        folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
+        chat = try c.decodeIfPresent([ChatMessage].self, forKey: .chat) ?? []
+        sentTo = try c.decodeIfPresent([NoteSend].self, forKey: .sentTo) ?? []
     }
 }
 

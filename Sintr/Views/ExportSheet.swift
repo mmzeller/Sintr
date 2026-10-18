@@ -16,6 +16,9 @@ struct ExportSheet: View {
 
     private var notes: [Note] {
         if let id = request.noteID { return store.note(id).map { [$0] } ?? [] }
+        if let folderID = request.folderID {
+            return store.notes.filter { $0.folderID == folderID }.sorted { $0.created > $1.created }
+        }
         return store.notes.sorted { $0.created > $1.created }
     }
 
@@ -33,7 +36,10 @@ struct ExportSheet: View {
                     .pickerStyle(.inline)
                     .labelsHidden()
                 } header: {
-                    Text(request.noteID == nil ? "Export all \(notes.count) notes as" : "Export “\(notes.first?.displayTitle ?? "")” as")
+                    Text(request.noteID != nil
+                         ? "Export “\(notes.first?.displayTitle ?? "")” as"
+                         : (request.folderID.flatMap { store.folder($0)?.name }.map { "Export the \(notes.count) notes in “\($0)” as" }
+                            ?? "Export all \(notes.count) notes as"))
                 } footer: {
                     Text(format.explanation)
                 }

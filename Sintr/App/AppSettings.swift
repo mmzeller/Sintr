@@ -29,6 +29,19 @@ enum AppSettings {
     static let monitorLevels = "monitorLevels"
     /// Drop lines the microphone picked up from the speakers (call audio heard twice).
     static let removeEcho = "removeEcho"
+    /// How hard Claude thinks (`ClaudeEffort` raw value; empty is the model's default).
+    static let claudeEffort = "claudeEffort"
+    /// Which AI answers in Ask: "apple", "local" or "claude".
+    static let askEngine = "askEngine"
+    /// Language Enhance writes notes in (BCP-47); empty means the meeting's language.
+    static let notesLanguage = "notesLanguage"
+    /// Mac: let AI apps (Claude Desktop, Claude Code…) read notes through Sintr's MCP server.
+    static let allowAIApps = "allowAIApps"
+    /// Mac: run the local API (localhost only, token required) while Sintr is open.
+    static let localAPI = "localAPI"
+    static let localAPIPort = "localAPIPort"
+    /// JSON of the integration settings (no secrets — those are in the Keychain).
+    static let integrations = "integrations"
 
     static let defaultClaudeModel = "claude-sonnet-5-5"
 
@@ -57,6 +70,13 @@ enum AppSettings {
             phoneModel: PhoneModelChoice.defaultChoice.rawValue,
             monitorLevels: true,
             removeEcho: true,
+            claudeEffort: ClaudeEffort.modelDefault.rawValue,
+            askEngine: AskEngine.apple.rawValue,
+            notesLanguage: "",
+            allowAIApps: false,
+            localAPI: false,
+            localAPIPort: 52817,
+            integrations: "",
         ])
     }
 
@@ -69,6 +89,19 @@ enum AppSettings {
     }
     static var shouldMonitorLevels: Bool { UserDefaults.standard.bool(forKey: monitorLevels) }
     static var shouldRemoveEcho: Bool { UserDefaults.standard.bool(forKey: removeEcho) }
+    static var claudeEffortChoice: ClaudeEffort {
+        ClaudeEffort(rawValue: UserDefaults.standard.string(forKey: claudeEffort) ?? "") ?? .modelDefault
+    }
+    static var askEngineChoice: AskEngine {
+        AskEngine(rawValue: UserDefaults.standard.string(forKey: askEngine) ?? "") ?? .apple
+    }
+    static var notesLanguageID: String { UserDefaults.standard.string(forKey: notesLanguage) ?? "" }
+    static var aiAppsAllowed: Bool { UserDefaults.standard.bool(forKey: allowAIApps) }
+    static var localAPIEnabled: Bool { UserDefaults.standard.bool(forKey: localAPI) }
+    static var localAPIPortNumber: Int {
+        let port = UserDefaults.standard.integer(forKey: localAPIPort)
+        return (1024...65535).contains(port) ? port : 52817
+    }
     static var microphoneDeviceUID: String { UserDefaults.standard.string(forKey: microphoneUID) ?? "" }
     static var glossaryText: String {
         (UserDefaults.standard.string(forKey: glossary) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
