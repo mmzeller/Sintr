@@ -109,6 +109,8 @@ final class AudioHub {
     func startMonitoringIfWanted() async {
         lastSettings = settingsKey
         #if os(macOS)
+        // Wait for the setup screen, so its microphone question comes first.
+        guard UserDefaults.standard.bool(forKey: AppSettings.setupDone) else { return }
         guard AppSettings.shouldMonitorLevels, !isRecording else { return }
         guard await MicCapture.requestPermission() else {
             micName = "Microphone not allowed"

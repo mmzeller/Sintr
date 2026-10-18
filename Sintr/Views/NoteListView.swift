@@ -175,6 +175,7 @@ struct NoteListView: View {
                         appState.folderPick = .open
                     }
                     Divider()
+                    Button("Set up recording…", systemImage: "mic.badge.plus") { appState.showSetup = true }
                     Button("Import files…", systemImage: "square.and.arrow.down") { appState.showImporter = true }
                     Button("Export all notes…", systemImage: "square.and.arrow.up") {
                         appState.exportRequest = .init(noteID: nil)

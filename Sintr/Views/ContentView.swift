@@ -9,6 +9,7 @@ struct ContentView: View {
     @State private var showStorageWarning = Storage.current.warning != nil
     /// The shared-folder action the file picker is open for (kept after the picker closes).
     @State private var activePick: AppState.FolderPick?
+    @AppStorage(AppSettings.setupDone) private var setupDone = false
 
     var body: some View {
         @Bindable var appState = appState
@@ -79,6 +80,12 @@ struct ContentView: View {
         #endif
         .sheet(item: $appState.exportRequest) { request in
             ExportSheet(request: request)
+        }
+        .sheet(isPresented: Binding(
+            get: { appState.showSetup || !setupDone },
+            set: { if !$0 { appState.showSetup = false; setupDone = true } }
+        )) {
+            SetupView()
         }
         .sheet(item: $appState.sendRequest) { request in
             SendSheet(noteID: request.noteID, kind: request.kind)

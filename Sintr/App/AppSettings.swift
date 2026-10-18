@@ -42,6 +42,8 @@ enum AppSettings {
     static let localAPIPort = "localAPIPort"
     /// JSON of the integration settings (no secrets — those are in the Keychain).
     static let integrations = "integrations"
+    /// The "Let Sintr transcribe your meetings" screen has been seen on this device.
+    static let setupDone = "setupDone"
 
     static let defaultClaudeModel = "claude-sonnet-5-5"
 
@@ -77,6 +79,7 @@ enum AppSettings {
             localAPI: false,
             localAPIPort: 52817,
             integrations: "",
+            setupDone: false,
         ])
     }
 

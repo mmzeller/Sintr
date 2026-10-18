@@ -109,6 +109,8 @@ final class AppState {
     var translateNoteID: UUID?
     /// iPhone: Ask Sintr is showing.
     var showAsk = false
+    /// The recording setup screen is showing (it also shows by itself the first time).
+    var showSetup = false
     /// Which notes the list shows.
     var folderFilter: FolderFilter = .all
     /// Sending a note to another app.
@@ -186,6 +188,8 @@ struct SintrCommands: Commands {
             }
             .keyboardShortcut("r", modifiers: [.command, .shift])
             .disabled(recorder.isFinishing || (!recorder.isRecording && recorder.isActive))
+            Divider()
+            Button("Set Up Recording…") { appState.showSetup = true }
         }
         CommandGroup(after: .help) {
             Button("Activity Log…") { openWindow(id: ActivityLogView.windowID) }

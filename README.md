@@ -118,6 +118,8 @@ Then press ▶ in Xcode again (and run `install-mac.sh` again if you use the cop
 
 ## Recording calls on the Mac
 
+The first time Sintr opens, **Let Sintr transcribe your meetings** lists everything recording needs — your microphone, the other side of calls, Apple's speech model, and telling voices apart — with an Allow or Download button for each. Open it again any time from ⋯ → **Set up recording…** (or Recording → Set Up Recording… on the Mac).
+
 1. Under the Record button, set **Meeting audio** to **All Mac audio** (catches any call app) or pick one app. **Off** is for in-person meetings and voice notes.
 2. The first time, macOS asks to let Sintr **record system audio** — click **Allow**. Without it, macOS quietly gives Sintr silence instead of the call. If you clicked Don't Allow, use the orange **Allow call audio…** button, or turn Sintr on in System Settings → Privacy & Security → Screen & System Audio Recording → System Audio Recording Only.
 3. The meters under the Record button show what Sintr hears **right now** — your microphone, and the call side (“quiet”, “waiting for Teams”, or “not allowed” if macOS is giving it silence). Play something before a meeting to check it.
