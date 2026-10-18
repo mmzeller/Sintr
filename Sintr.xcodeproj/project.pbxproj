@@ -301,6 +301,8 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.mmzeller.Sintr;
+				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = io.github.mmzeller.Sintr.iphone;
+				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*]" = io.github.mmzeller.Sintr.iphone;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
@@ -346,6 +348,8 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.mmzeller.Sintr;
+				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = io.github.mmzeller.Sintr.iphone;
+				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*]" = io.github.mmzeller.Sintr.iphone;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";

@@ -90,10 +90,10 @@ No Apple account is needed on the Mac. (If you set up a signing team for the iPh
 
 ## Put it on your iPhone
 
-The iPhone needs an Apple Account in Xcode:
+The iPhone needs an Apple Account in Xcode — any Apple ID works, including the free one you use for the App Store:
 
-1. Open the project: `open ~/Sintr/Sintr.xcodeproj`. In Xcode: **Xcode → Settings → Accounts → +** → Apple Account, and sign in with your Apple ID. Close Settings.
-2. In the left column click the blue **Sintr** icon at the very top, then **Signing & Capabilities**, and under **Team** choose your name (Personal Team).
+1. Open the project: `open ~/Sintr/Sintr.xcodeproj`. In Xcode: **Xcode → Settings → Accounts**. If an account is listed that you can't sign in to any more, select it and press **−**. Then **+** → Apple Account, and sign in with your Apple ID. Close Settings.
+2. In the left column click the blue **Sintr** icon at the very top, then **Signing & Capabilities**, and under **Team** choose your name (Personal Team). (The iPhone app's ID is `io.github.mmzeller.Sintr.iphone`.)
 3. Connect the iPhone to the Mac with a cable and unlock it. If it asks "Trust This Computer?", tap **Trust**.
 4. On the iPhone: **Settings → Privacy & Security → Developer Mode** → on. It restarts; confirm when it comes back.
 5. In Xcode, choose your iPhone as the destination (next to ▶) and press **▶ (Run)**. The first build takes several minutes.
@@ -184,7 +184,8 @@ In **Settings → Connections**:
 
 ## If something goes wrong
 
-- **Building says “Unable to log in with account …” or “No signing certificate "Mac Development" found”:** Xcode's saved Apple sign-in has expired. `install-mac.sh` then builds without it, so the Mac app still installs. To sign with your team again (needed for the iPhone): **Xcode → Settings → Accounts**, select the account and sign in again — or remove it with **−**, add your current Apple ID with **+**, and choose that team under Signing & Capabilities.
+- **Building says “Unable to log in with account …” or “No signing certificate "Mac Development" found”:** Xcode's saved Apple sign-in doesn't work any more. `install-mac.sh` builds without it, so the Mac app still installs. For the iPhone: **Xcode → Settings → Accounts**, remove that account with **−**, add the Apple ID you use now with **+**, and choose its team under Signing & Capabilities.
+- **Moving to a different Apple ID:** if the old Sintr is still on your iPhone and opens, export your notes first (⋯ → Export all notes… → Sintr backup → AirDrop to your Mac) — the copy installed with your new Apple ID is a separate app. Import the backup into it, then delete the old one.
 
 - **Start with the Activity Log** (Help → Activity Log… on the Mac, Settings → Troubleshooting on iPhone). It records which microphone and output device Sintr used, audio formats, when sound and words first arrived, timings and errors — never what anyone said. It keeps the previous session too, and on the Mac it shows a summary of the last crash. **Copy** it into a message to Claude.
 
