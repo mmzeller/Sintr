@@ -79,27 +79,25 @@ Needs iOS 26 or macOS 26, and Xcode 26 or newer on the Mac.
 ## First time on your Mac
 
 1. Install **Xcode** from the Mac App Store (it's free, and large — let it finish), then open it once and let it install its extra components.
-2. Open **Terminal** and download Sintr:
+2. Open **Terminal**, download Sintr and install it:
    ```
    git clone https://github.com/mmzeller/Sintr.git ~/Sintr
-   open ~/Sintr/Sintr.xcodeproj
+   bash ~/Sintr/install-mac.sh
    ```
-3. In Xcode: **Xcode → Settings → Accounts → +** → Apple Account, and sign in with your Apple ID. Close Settings.
-4. In the left column click the blue **Sintr** icon at the very top, then **Signing & Capabilities**, and under **Team** choose your name (Personal Team).
-5. At the top of the window, next to the ▶ button, choose **My Mac** as the destination, then press **▶ (Run)**.
-6. Sintr opens. The first time you press **Record**, it asks to download Apple's speech model, then macOS asks for the microphone and for permission to record system audio. Allow both.
+3. Sintr opens from your Applications folder and shows **Let Sintr transcribe your meetings** — allow the microphone and call audio, and download the speech model.
 
-To keep Sintr in your Applications folder (so you can open it without Xcode), run this once in Terminal after step 5:
-```
-bash ~/Sintr/install-mac.sh
-```
+No Apple account is needed on the Mac. (If you set up a signing team for the iPhone below, the Mac app is signed with it too, so macOS remembers Sintr's permissions across updates. Without one, macOS may ask for the microphone and call audio again after an update.)
 
 ## Put it on your iPhone
 
-1. Connect the iPhone to the Mac with a cable and unlock it. If it asks "Trust This Computer?", tap **Trust**.
-2. On the iPhone: **Settings → Privacy & Security → Developer Mode** → on. It restarts; confirm when it comes back.
-3. In Xcode, choose your iPhone as the destination (next to ▶) and press **▶ (Run)**. The first build takes several minutes.
-4. If the iPhone says the developer isn't trusted: **Settings → General → VPN & Device Management** → your Apple ID → **Trust**. Then open Sintr.
+The iPhone needs an Apple Account in Xcode:
+
+1. Open the project: `open ~/Sintr/Sintr.xcodeproj`. In Xcode: **Xcode → Settings → Accounts → +** → Apple Account, and sign in with your Apple ID. Close Settings.
+2. In the left column click the blue **Sintr** icon at the very top, then **Signing & Capabilities**, and under **Team** choose your name (Personal Team).
+3. Connect the iPhone to the Mac with a cable and unlock it. If it asks "Trust This Computer?", tap **Trust**.
+4. On the iPhone: **Settings → Privacy & Security → Developer Mode** → on. It restarts; confirm when it comes back.
+5. In Xcode, choose your iPhone as the destination (next to ▶) and press **▶ (Run)**. The first build takes several minutes.
+6. If the iPhone says the developer isn't trusted: **Settings → General → VPN & Device Management** → your Apple ID → **Trust**. Then open Sintr.
 
 **Every 7 days:** apps installed with a free Apple ID stop opening after a week. Plug the phone in and press ▶ in Xcode again — your notes stay. (With the paid $99/year Apple Developer Program this becomes once a year.)
 
@@ -114,7 +112,7 @@ Tip: record on the iPhone, send the note to the Mac, and Enhance it there with A
 ```
 bash ~/Sintr/update.sh
 ```
-Then press ▶ in Xcode again (and run `install-mac.sh` again if you use the copy in Applications). Your notes are kept.
+Then run `bash ~/Sintr/install-mac.sh` (and `make-portable.sh` for the portable copy, or ▶ in Xcode for the iPhone). Your notes are kept.
 
 ## Recording calls on the Mac
 
@@ -185,6 +183,8 @@ In **Settings → Connections**:
 3. Everyone sees the same notes; Sintr checks for changes every 15 seconds. If two people change the same note at the same time, the later save is kept as “(conflict copy)” so nothing is lost. Audio recordings stay on the device that made them.
 
 ## If something goes wrong
+
+- **Building says “Unable to log in with account …” or “No signing certificate "Mac Development" found”:** Xcode's saved Apple sign-in has expired. `install-mac.sh` then builds without it, so the Mac app still installs. To sign with your team again (needed for the iPhone): **Xcode → Settings → Accounts**, select the account and sign in again — or remove it with **−**, add your current Apple ID with **+**, and choose that team under Signing & Capabilities.
 
 - **Start with the Activity Log** (Help → Activity Log… on the Mac, Settings → Troubleshooting on iPhone). It records which microphone and output device Sintr used, audio formats, when sound and words first arrived, timings and errors — never what anyone said. It keeps the previous session too, and on the Mac it shows a summary of the last crash. **Copy** it into a message to Claude.
 

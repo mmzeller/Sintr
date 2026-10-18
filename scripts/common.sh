@@ -37,3 +37,8 @@ ensure_metal_toolchain() {
     fi
   fi
 }
+
+# The signing team Xcode saved in the project (10 letters and digits), or nothing.
+team_from_project() {
+  sed -nE 's/.*DEVELOPMENT_TEAM = ([A-Z0-9]{10});.*/\1/p' "$1" | head -1
+}

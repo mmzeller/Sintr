@@ -13,7 +13,7 @@ fi
 
 # Xcode writes your team into the project file when you pick it under Signing & Capabilities.
 # Remember it, undo that one local change so the update applies cleanly, then put it back.
-TEAM=$(grep -oE 'DEVELOPMENT_TEAM = [A-Z0-9]{10};' "$PROJECT" | head -1 | grep -oE '[A-Z0-9]{10}' || true)
+TEAM=$(sed -nE 's/.*DEVELOPMENT_TEAM = ([A-Z0-9]{10});.*/\1/p' "$PROJECT" | head -1)
 git checkout -- "$PROJECT" 2>/dev/null || true
 # Xcode also rewrites the list of package versions; let the update replace it.
 git checkout -- Sintr.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved 2>/dev/null || true
