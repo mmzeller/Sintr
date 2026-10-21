@@ -7,9 +7,15 @@ UDID=$(xcrun simctl list devices available -j | python3 -c "
 import json, sys
 devices = json.load(sys.stdin)['devices']
 phones = [(runtime, d) for runtime, items in devices.items() if 'iOS' in runtime for d in items if d['name'].startswith('iPhone')]
-plain = [p for p in phones if 'Max' not in p[1]['name'] and 'Plus' not in p[1]['name'] and 'Pro' not in p[1]['name']] or phones
-plain.sort(key=lambda p: (p[0], p[1]['name']))
-print(plain[-1][1]['udid'])")
+# The same width as an iPhone 12 (390 points) where possible.
+preferred = ['iPhone 16e', 'iPhone 17', 'iPhone 16', 'iPhone 15']
+phones.sort(key=lambda p: p[0], reverse=True)
+for name in preferred:
+    match = [p for p in phones if p[1]['name'] == name]
+    if match:
+        print(match[0][1]['udid']); break
+else:
+    print(phones[0][1]['udid'])")
 NAME=$(xcrun simctl list devices | grep "$UDID" | sed 's/ (.*//' | xargs)
 echo "Simulator: $NAME ($UDID)"
 
@@ -29,7 +35,7 @@ for SIZE in large extra-extra-extra-large accessibility-medium accessibility-ext
   xcrun simctl ui "$UDID" content_size "$SIZE"
   xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null
   xcrun simctl launch "$UDID" "$BUNDLE" >/dev/null
-  sleep 8
+  sleep 15
   xcrun simctl io "$UDID" screenshot "shots/setup-$SIZE.png" >/dev/null
 done
 ls -la shots

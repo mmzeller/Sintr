@@ -86,7 +86,7 @@ struct SetupView: View {
                              detail: "Apple's speech model for \(locale.map(SpeechSupport.displayName) ?? "your language") — a one-time download from Apple.") { speechControl }
                     Divider()
                     SetupRow(title: "See who's speaking",
-                             detail: "Tells voices apart on this \(Platform.deviceName): Me and Them on calls, Speaker 1, 2… in person. Click a label to put a name to it. A one-time download of a few dozen MB.") { speakerControl }
+                             detail: "Tells voices apart on this \(Platform.deviceName): Me and Them on calls, Speaker 1, 2… in person. \(Platform.isMac ? "Click" : "Tap") a label to put a name to it. A one-time download of a few dozen MB.") { speakerControl }
                 }
                 .background(RoundedRectangle(cornerRadius: 14).strokeBorder(.separator))
 
