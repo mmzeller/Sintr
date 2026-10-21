@@ -145,3 +145,24 @@ jobs:
           OUT=$(cat "$RUNNER_TEMP/last-check.txt")
           grep -qx "portable=true" <<<"$OUT"
           grep -qx "note=true settings=true" <<<"$OUT"
+
+  screens:
+    name: iPhone screenshots
+    runs-on: macos-26
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use the newest Xcode 26
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
+          xcodebuild -version
+
+      - name: Build for the iPhone simulator and take screenshots
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci-screenshots.sh

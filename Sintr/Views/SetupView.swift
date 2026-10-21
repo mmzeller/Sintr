@@ -106,7 +106,7 @@ struct SetupView: View {
                         .disabled(mic != .allowed)
                 }
             }
-            .padding(32)
+            .padding(Platform.isMac ? 32 : 20)
         }
         #if os(macOS)
         .frame(width: 600, height: 640)
@@ -245,24 +245,42 @@ struct SetupView: View {
     }
 }
 
+/// One requirement: what it is on the left, its status or button on the right — or, on an
+/// iPhone (and with larger text anywhere), the button underneath, so nothing gets squeezed.
 private struct SetupRow<Control: View>: View {
     let title: String
     let detail: String
     @ViewBuilder let control: Control
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    private var stacked: Bool {
+        #if os(iOS)
+        return true
+        #else
+        return typeSize >= .xxLarge
+        #endif
+    }
+
     var body: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.headline)
+        let layout = stacked
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 16))
+        layout {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(detail)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
             control
+                .fixedSize()
         }
-        .padding(.horizontal, 18)
+        .padding(.horizontal, stacked ? 16 : 18)
         .padding(.vertical, 16)
     }
 }
@@ -272,6 +290,8 @@ private struct EnabledBadge: View {
         Label("Enabled", systemImage: "checkmark")
             .font(.callout.weight(.medium))
             .foregroundStyle(.green)
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(Color.green.opacity(0.14), in: Capsule())
