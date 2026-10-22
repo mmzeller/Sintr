@@ -16,6 +16,7 @@ struct SectisSelfTest {
     }
 
     static func main() async throws {
+        setvbuf(stdout, nil, _IONBF, 0)   // keep every line even if something crashes
         let args = CommandLine.arguments
         guard args.count == 3 else { print("usage: sectis-selftest <fixture.json> <out.json>"); exit(2) }
         let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: args[1]))) as! [String: Any]

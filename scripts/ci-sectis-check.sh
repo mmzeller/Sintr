@@ -10,16 +10,34 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 WORK="${RUNNER_TEMP:-$(mktemp -d)}/sectis-check"
 rm -rf "$WORK"; mkdir -p "$WORK"
+LOG="$WORK/log.txt"
+: > "$LOG"
+
+# Runs a step, keeping its output (and any crash message) in the log too.
+run() { "$@" 2>&1 | tee -a "$LOG"; return "${PIPESTATUS[0]}"; }
+
+# On GitHub, a failure shows its ✗ lines and the last lines of output as annotations,
+# so they can be read on the run's summary page.
+report() {
+  local code=$?
+  if [ "$code" -ne 0 ] && [ -n "${GITHUB_ACTIONS:-}" ]; then
+    grep -E "✗|Fatal|fatal|error|Error|expected:|got:|parsed:|crash|Crash" "$LOG" | head -9 | while IFS= read -r line; do
+      echo "::error::$(printf '%s' "$line" | sed -e 's/%/%25/g')"
+    done
+    echo "::warning title=Last lines (exit $code)::$(tail -45 "$LOG" | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')"
+  fi
+}
+trap report EXIT
 
 echo "== Compile"
-swiftc -O -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+run swiftc -Onone -g -parse-as-library -target "$(uname -m)-apple-macos14.0" \
   Sintr/Transfer/SectisFormat.swift Sintr/Transfer/SectisCloud.swift scripts/sectis-selftest.swift \
   -o "$WORK/sectis-selftest"
 
 echo "== Format, encryption and action items"
-node scripts/sectis-check.mjs make "$WORK/fixture.json"
-"$WORK/sectis-selftest" "$WORK/fixture.json" "$WORK/sintr.json"
-node scripts/sectis-check.mjs verify "$WORK/fixture.json" "$WORK/sintr.json"
+run node scripts/sectis-check.mjs make "$WORK/fixture.json"
+run "$WORK/sectis-selftest" "$WORK/fixture.json" "$WORK/sintr.json"
+run node scripts/sectis-check.mjs verify "$WORK/fixture.json" "$WORK/sintr.json"
 
 echo "== Firestore emulator with Sectis's rules"
 # The rules from Sectis's README, word for word.
@@ -45,6 +63,6 @@ cat > "$WORK/firebase.json" <<'JSON'
 JSON
 npm install --silent --no-save --no-audit --no-fund --prefix "$WORK/npm" firebase@10.14.1 firebase-tools@14 >/dev/null
 export SECTIS_NODE_MODULES="$WORK/npm/node_modules"
-"$WORK/npm/node_modules/.bin/firebase" emulators:exec --config "$WORK/firebase.json" --only firestore --project demo-sectis \
+run "$WORK/npm/node_modules/.bin/firebase" emulators:exec --config "$WORK/firebase.json" --only firestore --project demo-sectis \
   "\"$WORK/sectis-selftest\" \"$WORK/fixture.json\" \"$WORK/sintr.json\" && node scripts/sectis-check.mjs listen \"$WORK/fixture.json\" \"$WORK/sintr.json\""
 echo "Sectis checks passed."
