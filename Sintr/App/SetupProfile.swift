@@ -34,7 +34,8 @@ struct SetupProfile: Codable {
         let defaults = UserDefaults.standard
         for key in textKeys { if let value = defaults.string(forKey: key) { profile.settings[key] = value } }
         for key in switchKeys { profile.switches[key] = defaults.bool(forKey: key) }
-        profile.integrations = IntegrationSettings.load()
+        // Personal ones (Sectis: your names) stay on this device.
+        profile.integrations = IntegrationSettings.load().filter { IntegrationKind(rawValue: $0.key)?.isPersonal != true }
         return profile
     }
 
@@ -58,7 +59,7 @@ struct SetupProfile: Codable {
         for (key, value) in switches where Self.switchKeys.contains(key) { defaults.set(value, forKey: key) }
         // Integration targets and options; keys stay whatever this device already has.
         for (name, config) in integrations {
-            if let kind = IntegrationKind(rawValue: name) { IntegrationSettings.save(config, for: kind) }
+            if let kind = IntegrationKind(rawValue: name), !kind.isPersonal { IntegrationSettings.save(config, for: kind) }
         }
         // Templates: same ID replaces, new ones are added, the person's other templates stay.
         let file = Storage.root.appendingPathComponent("Templates.json")

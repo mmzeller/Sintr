@@ -1,15 +1,16 @@
 import Foundation
 
-/// Apps a note can be sent to. Nothing is sent unless you press Send — or, for Notion and
-/// webhooks only, you turn on "Send automatically after Enhance" for that app.
-/// Keys and tokens are kept in the Keychain.
+/// Apps a note can be sent to. Nothing is sent unless you press Send — or, for Sectis, Notion
+/// and webhooks only, you turn on "Send automatically after Enhance" for that app.
+/// Keys, tokens and the Sectis join code are kept in the Keychain.
 enum IntegrationKind: String, CaseIterable, Identifiable, Codable, Sendable {
-    case notion, hubspot, attio, affinity, webhook
+    case sectis, notion, hubspot, attio, affinity, webhook
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .sectis: "Sectis"
         case .notion: "Notion"
         case .hubspot: "HubSpot"
         case .attio: "Attio"
@@ -20,6 +21,7 @@ enum IntegrationKind: String, CaseIterable, Identifiable, Codable, Sendable {
 
     var systemImage: String {
         switch self {
+        case .sectis: "checklist"
         case .notion: "doc.richtext"
         case .hubspot, .attio, .affinity: "person.crop.rectangle.stack"
         case .webhook: "bolt.horizontal"
@@ -29,10 +31,17 @@ enum IntegrationKind: String, CaseIterable, Identifiable, Codable, Sendable {
     /// CRM notes are attached to a person, found by email.
     var needsContact: Bool { self == .hubspot || self == .attio || self == .affinity }
     var needsKey: Bool { self != .webhook }
-    var canAutoSend: Bool { self == .notion || self == .webhook }
+    var canAutoSend: Bool { self == .sectis || self == .notion || self == .webhook }
+    /// Sectis gets your action items, not the note, so the transcript never goes with it.
+    var sendsWholeNote: Bool { self != .sectis }
+    /// The target field can be left empty (Sectis: the names you go by).
+    var targetIsOptional: Bool { self == .sectis }
+    /// Personal settings that a shared team setup shouldn't carry or overwrite.
+    var isPersonal: Bool { self == .sectis }
 
     var keyLabel: String {
         switch self {
+        case .sectis: "Join code"
         case .notion: "Internal integration secret"
         case .hubspot: "Private app access token"
         case .attio: "Access token"
@@ -43,6 +52,7 @@ enum IntegrationKind: String, CaseIterable, Identifiable, Codable, Sendable {
 
     var targetLabel: String? {
         switch self {
+        case .sectis: "Names you go by (optional)"
         case .notion: "Page or database link"
         case .webhook: "Webhook URL"
         default: nil
@@ -51,6 +61,8 @@ enum IntegrationKind: String, CaseIterable, Identifiable, Codable, Sendable {
 
     var setupHelp: String {
         switch self {
+        case .sectis:
+            "Sends only your own action items — unchecked ones whose owner is “Me” or one of the names below — to your Sectis Inbox, tagged Meeting. Turn on sync in Sectis first, then open Settings → Sync → Add Another Device, copy the code that starts with SECTIS- and save it here. Each to-do is encrypted on this \(Platform.deviceName) the same way Sectis does it."
         case .notion:
             "Create an internal integration at notion.so/profile/integrations and copy its secret. Then open the page or database notes should go to, choose ••• → Connections → add your integration, and paste that page's link here."
         case .hubspot:
@@ -100,7 +112,8 @@ enum IntegrationSettings {
 
     static func isConfigured(_ kind: IntegrationKind) -> Bool {
         if kind.needsKey, secret(kind) == nil { return false }
-        if kind.targetLabel != nil, config(kind).target.trimmingCharacters(in: .whitespaces).isEmpty { return false }
+        if kind.targetLabel != nil, !kind.targetIsOptional,
+           config(kind).target.trimmingCharacters(in: .whitespaces).isEmpty { return false }
         return true
     }
 
@@ -142,6 +155,7 @@ enum Integrations {
         let markdown = body(of: note, includeTranscript: includeTranscript)
         let result: NoteSend
         switch kind {
+        case .sectis: return try await Sectis.send(note, joinCode: key)
         case .notion: result = try await sendToNotion(note, markdown: markdown, key: key, target: config.target)
         case .hubspot: result = try await sendToHubSpot(note, markdown: markdown, key: key, email: email)
         case .attio: result = try await sendToAttio(note, markdown: markdown, key: key, email: email)
@@ -156,6 +170,8 @@ enum Integrations {
     static func test(_ kind: IntegrationKind) async throws -> String {
         let key = IntegrationSettings.secret(kind) ?? ""
         switch kind {
+        case .sectis:
+            return try await Sectis.test(joinCode: key)
         case .notion:
             _ = try await request(kind, "GET", "https://api.notion.com/v1/users/me", headers: notionHeaders(key))
             return "Connected to Notion."

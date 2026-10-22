@@ -77,6 +77,32 @@ jobs:
           name: build-log-${{ matrix.platform }}
           path: build.log
 
+  sectis:
+    name: Sectis format
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use the newest Xcode 26
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
+          xcodebuild -version
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The Firestore emulator runs on Java.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Check Sintr reads and writes Sectis's sync format, and finds your action items
+        run: bash scripts/ci-sectis-check.sh
+
   portable:
     name: Portable (Mac)
     # Running Sintr needs macOS 26 (building works on 15).

@@ -53,6 +53,7 @@ enum Enhancer {
         If something in the transcript is unclear, say so instead of guessing.
         "Me" in the transcript is the person whose notes these are; "Them" is everyone else on the call.
         Speaker names in the transcript ("Me", "Them", "Speaker 1" or real names) tell you who said what.
+        When an action item belongs to the person whose notes these are, write "Me" as its owner.
         Write Markdown with short headings and bullet points. No introduction or sign-off.
         """
 

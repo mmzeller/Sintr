@@ -13,6 +13,7 @@ Private meeting notes for iPhone and Mac, in the spirit of Granola — but every
 - **Ask:** chat with one note (“what did I commit to?”, “draft the follow-up email”) or across all of them (“what did we decide about the budget last week?”), with links back to the notes each answer came from.
 - **Folders and shared folders:** organize notes in folders. Put a folder in OneDrive, iCloud Drive, Dropbox or a network share and everyone who opens it in Sintr works on the same notes — no Sintr account or server.
 - **Integrations:** send a note to Notion, HubSpot, Attio, Affinity, or anywhere through a Zapier / Make / n8n / Power Automate webhook.
+- **Sectis:** your own action items go straight to your Sectis Inbox after Enhance — only the ones that are yours, encrypted on your device the same way Sectis encrypts its own.
 - **AI apps and scripts (Mac):** an MCP server lets Claude Desktop, Claude Code and other AI apps read your notes when you allow it; a local API and a command line give scripts read-only access.
 - **Import and export** Markdown, plain text, Sintr backups and audio files. Notes are plain Markdown when exported, so Nextpad++ (and Parakeet) can open them.
 
@@ -31,6 +32,7 @@ The options Parakeet shows next to its Record button — meeting audio, detect s
 | Ask with Apple Intelligence or the local model | Your device (search is on-device too) | No |
 | Claude (Enhance, Ask or Translate) | Anthropic's Claude API | Yes — only when you choose Claude |
 | Send to Notion / HubSpot / Attio / Affinity / webhook | That app | Yes — when you press Send, or after Enhance if you turned that on for Notion or a webhook |
+| Send action items to Sectis | Your own Firebase project, encrypted on your device first (Firebase only stores scrambled data) | Yes — when you press Send, or after Enhance if you turned that on |
 | Shared folders | The folder you chose | Only through whatever syncs that folder (OneDrive, iCloud…) |
 | MCP server, local API, command line (Mac) | Your Mac (local API: 127.0.0.1 only, token required) | No — what an AI app does with an answer is up to that app |
 | Share / Export | Wherever you send it (AirDrop goes directly between devices) | Depends on where you send it |
@@ -54,7 +56,7 @@ Granola's Basic and Business plans list these features. Here's where each one is
 | Opt out of model training | Nothing to opt out of: Sintr never trains on your notes |
 | Unlimited meeting notes and history | ✓ |
 | Advanced AI thinking models | Claude Opus 5.5, Fable 5.1, Sonnet 5.5 or Haiku 5.5 with a **Thinking** level (Settings → Claude); on the Mac, Qwen3 4B / 8B as the most capable models that never leave it |
-| Integrations with Attio, Notion, HubSpot, Affinity, Zapier | **Share → Send to…** Notion, HubSpot, Attio, Affinity, or a webhook for Zapier, Make, n8n or Power Automate (Settings → Integrations). Notion and webhooks can receive notes automatically after Enhance |
+| Integrations with Attio, Notion, HubSpot, Affinity, Zapier | **Share → Send to…** Notion, HubSpot, Attio, Affinity, or a webhook for Zapier, Make, n8n or Power Automate (Settings → Integrations). Notion and webhooks can receive notes automatically after Enhance — and your own action items can go to Sectis |
 | Centralized billing & user management | No billing or accounts to manage. **Settings → Team setup → Share your setup…** gives teammates the same templates, names and terms, defaults and integration targets |
 | MCP integration in all your apps | Built-in MCP server on the Mac (Settings → Connections): one click adds it to Claude Desktop; works with Claude Code and other MCP apps. Read-only and off until you turn it on |
 | API access | Local read-only API on the Mac (`/v1/notes`, `/v1/notes/{id}`, `/v1/search`, `/v1/folders`, token required) and a command line (`Sintr --cli list / search / get / folders`) |
@@ -175,6 +177,23 @@ In **Settings → Connections**:
   /Applications/Sintr.app/Contents/MacOS/Sintr --cli list --since 7d --json
   /Applications/Sintr.app/Contents/MacOS/Sintr --cli get <id> --transcript
   ```
+
+## Sending your action items to Sectis
+
+Sintr can put the action items that are yours into your [Sectis](https://github.com/mmzeller/sectis) Inbox, so they show up on your Mac and iPhone with the rest of your to-dos.
+
+1. In Sectis, turn on sync (Settings → Sync), then choose **Add Another Device** and **Copy Code**.
+2. In Sintr: **Settings → Integrations → Sectis**, paste the code into **Join code** and press **Save**. **Test connection** checks it.
+3. Turn on **Send automatically after Enhance**. (Or send by hand: **Share → Send to → Sectis** on a note, which also shows you which items it found.)
+
+What gets sent:
+
+- **Only unchecked action items that are yours:** the owner is “Me” (Enhance writes that for your tasks), “you”, “everyone”, or one of the names in **Names you go by** (on a Mac, your account's name if you leave it empty). Items under a heading or label with your name count too, like “**Matthew**” or “Matthew's next steps”.
+- An item that doesn't name an owner is sent only when nobody else is in the note — a voice memo, or notes you typed alone.
+- Each one lands in the **Inbox**, tagged **Meeting**, with the meeting's name and date in its notes. A due date in the item (“by Friday”, “Oct 31”, “end of week”) becomes its deadline.
+- Automatic sending happens once per note. Send by hand later to add new items; ones already sent from that note — even if you've completed or deleted them in Sectis — aren't added again.
+
+Sintr writes straight to the Firebase project Sectis syncs through, encrypting each to-do with the key in your join code, so it works even when Sectis isn't open; they appear the next time it is. Your names stay on this device: **Share your setup** leaves the Sectis settings out.
 
 ## Shared folders
 
