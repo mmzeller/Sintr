@@ -21,7 +21,7 @@ run() { "$@" 2>&1 | tee -a "$LOG"; return "${PIPESTATUS[0]}"; }
 report() {
   local code=$?
   if [ "$code" -ne 0 ] && [ -n "${GITHUB_ACTIONS:-}" ]; then
-    grep -E "✗|Fatal|fatal|error|Error|expected:|got:|parsed:|crash|Crash" "$LOG" | head -9 | while IFS= read -r line; do
+    grep -E "✗|PROBE|Fatal|fatal|expected:|got:|parsed:|crash|Crash" "$LOG" | head -20 | while IFS= read -r line; do
       echo "::error::$(printf '%s' "$line" | sed -e 's/%/%25/g')"
     done
     echo "::warning title=Last lines (exit $code)::$(tail -45 "$LOG" | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')"
@@ -63,6 +63,10 @@ cat > "$WORK/firebase.json" <<'JSON'
 JSON
 npm install --silent --no-save --no-audit --no-fund --prefix "$WORK/npm" firebase@10.14.1 firebase-tools@14 >/dev/null
 export SECTIS_NODE_MODULES="$WORK/npm/node_modules"
+cat > "$WORK/emulator-steps.sh" <<STEPS
+node scripts/sectis-check.mjs probe "$WORK/fixture.json" || true
+"$WORK/sectis-selftest" "$WORK/fixture.json" "$WORK/sintr.json" && node scripts/sectis-check.mjs listen "$WORK/fixture.json" "$WORK/sintr.json"
+STEPS
 run "$WORK/npm/node_modules/.bin/firebase" emulators:exec --config "$WORK/firebase.json" --only firestore --project demo-sectis \
-  "\"$WORK/sectis-selftest\" \"$WORK/fixture.json\" \"$WORK/sintr.json\" && node scripts/sectis-check.mjs listen \"$WORK/fixture.json\" \"$WORK/sintr.json\""
+  "bash \"$WORK/emulator-steps.sh\""
 echo "Sectis checks passed."

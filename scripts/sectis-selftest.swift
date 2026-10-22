@@ -196,7 +196,11 @@ struct SectisSelfTest {
             """, solo: false, [("Update the runbook", nil)])
 
         if let host = ProcessInfo.processInfo.environment["FIRESTORE_EMULATOR_HOST"] {
-            try await cloudChecks(joinCode: fixture["joinCode"] as! String, host: host, space: space, out: args[2])
+            do {
+                try await cloudChecks(joinCode: fixture["joinCode"] as! String, host: host, space: space, out: args[2])
+            } catch {
+                check(false, "emulator: \(error.localizedDescription) — \((error as? SectisCloud.Failure)?.detail ?? "\(error)")")
+            }
         }
 
         print(failures == 0 ? "All Sectis checks passed." : "\(failures) Sectis check(s) failed.")

@@ -135,6 +135,50 @@ if (mode === 'make') {
   check(records[cloud.ids[0]].rec.deadline === '2026-10-23', 'deadline arrives');
   await app.delete();
   process.exit(0);
+} else if (mode === 'probe') {
+  // Diagnostics inside the emulator: the same write sent several ways, and through the SDK the
+  // way Sectis does it, printing what the emulator answers to each.
+  const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'));
+  const { aes } = await deriveSpaceAndKey(fixture.key);
+  // A space of its own, so the listen step still sees only what Sintr wrote.
+  const space = (await sha256hex('probe|' + fixture.key)).slice(0, 40);
+  const docs = `projects/${fixture.projectId}/databases/(default)/documents`;
+  const base = `http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/${docs}`;
+  const sealed = await encryptRec(aes, { id: 'probe', title: 'probe' });
+  const fields = { k: { stringValue: 'todo' }, m: { integerValue: String(Date.now()) }, d: { booleanValue: false }, c: { stringValue: sealed.c }, iv: { stringValue: sealed.iv } };
+  const name = (id) => `${docs}/sectis/${space}/items/${id}`;
+  const transform = [{ fieldPath: 't', setToServerValue: 'REQUEST_TIME' }];
+  const write = (id, opts) => Object.assign({ update: { name: name(id), fields } }, opts.t ? { updateTransforms: transform } : {}, opts.p ? { currentDocument: { exists: false } } : {});
+  const variants = [
+    ['batchWrite: transform + precondition', ':batchWrite', 'p1', { t: true, p: true }],
+    ['batchWrite: transform only', ':batchWrite', 'p2', { t: true }],
+    ['batchWrite: precondition only', ':batchWrite', 'p3', { p: true }],
+    ['batchWrite: plain', ':batchWrite', 'p4', {}],
+    ['commit: transform + precondition', ':commit', 'p5', { t: true, p: true }],
+    ['commit: transform only', ':commit', 'p6', { t: true }],
+  ];
+  for (const [label, op, id, opts] of variants) {
+    for (const withKey of [true, false]) {
+      const url = base + op + (withKey ? `?key=${fixture.apiKey}` : '');
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes: [write(id + (withKey ? 'k' : 'n'), opts)] }) });
+      console.log(`PROBE ${label}${withKey ? ' (key)' : ' (no key)'}: HTTP ${res.status} ${(await res.text()).replace(/\s+/g, ' ').slice(0, 300)}`);
+    }
+  }
+  const require = createRequire(join(process.env.SECTIS_NODE_MODULES, 'noop.js'));
+  const firebase = require('firebase/compat/app').default;
+  require('firebase/compat/firestore');
+  const app = firebase.initializeApp({ apiKey: fixture.apiKey, projectId: fixture.projectId }, 'probe');
+  const db = app.firestore();
+  const [host, port] = process.env.FIRESTORE_EMULATOR_HOST.split(':');
+  db.useEmulator(host, Number(port));
+  try {
+    await db.collection('sectis').doc(space).collection('items').doc('p7').set({ k: 'todo', m: Date.now(), d: false, t: firebase.firestore.FieldValue.serverTimestamp(), c: sealed.c, iv: sealed.iv });
+    console.log('PROBE SDK set (like Sectis): OK');
+  } catch (e) {
+    console.log('PROBE SDK set (like Sectis): ' + e);
+  }
+  await app.delete();
+  process.exit(0);
 } else {
-  fail('usage: sectis-check.mjs make|verify|listen …');
+  fail('usage: sectis-check.mjs make|verify|listen|probe …');
 }

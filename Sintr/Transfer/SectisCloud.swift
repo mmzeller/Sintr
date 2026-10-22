@@ -6,6 +6,8 @@ import Foundation
 enum SectisCloud {
     struct Failure: LocalizedError {
         let message: String
+        /// What Firebase actually said, for the Activity Log.
+        var detail = ""
         var errorDescription: String? { message }
     }
 
@@ -161,7 +163,8 @@ enum SectisCloud {
                ["api key", "api_key", "referer"].contains(where: { message.localizedCaseInsensitiveContains($0) }) {
                 return try await self.request(path, connection: connection, body: body, withKey: false)
             }
-            throw Failure(message: friendlyMessage(httpStatus: status, code: error?["status"] as? String ?? "", message: message))
+            throw Failure(message: friendlyMessage(httpStatus: status, code: error?["status"] as? String ?? "", message: message),
+                          detail: "HTTP \(status) \(String(data: data.prefix(600), encoding: .utf8) ?? "")")
         }
         return object ?? [String: Any]()
     }
