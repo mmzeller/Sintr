@@ -237,9 +237,9 @@ struct SectisSelfTest {
                                                  order: -Double(Int64(now.timeIntervalSince1970)) + Double(index) * 0.001, now: now)
             writes.append(try SectisCloud.createWrite(connection, id: id, kind: "todo", record: record, version: version))
         }
-        let first = try await SectisCloud.batchWrite(connection, writes)
+        let first = try await SectisCloud.createEach(connection, writes)
         check(first == [.created, .created], "Sectis's rules accept the new to-dos: \(first)")
-        let second = try await SectisCloud.batchWrite(connection, writes)
+        let second = try await SectisCloud.createEach(connection, writes)
         check(second == [.exists, .exists], "sending the same items again changes nothing: \(second)")
 
         // Outside the space Sectis's rules allow (shorter than 40 characters): refused.
@@ -248,7 +248,7 @@ struct SectisSelfTest {
         let record = SectisFormat.todoRecord(id: "snrefused0001", title: "x", notes: "", deadline: nil, tags: [], order: 0, now: now)
         let refusedWrite = try SectisCloud.createWrite(outside, id: "snrefused0001", kind: "todo", record: record, version: version)
         do {
-            let results = try await SectisCloud.batchWrite(outside, [refusedWrite])
+            let results = try await SectisCloud.createEach(outside, [refusedWrite])
             if case .failed(let message)? = results.first {
                 check(message.contains("rules"), "a write the rules refuse says the rules need setting up")
             } else {

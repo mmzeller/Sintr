@@ -87,7 +87,7 @@ enum Sectis {
             writes.append(try SectisCloud.createWrite(connection, id: id, kind: "todo", record: record, version: version))
         }
 
-        let results = try await SectisCloud.batchWrite(connection, writes)
+        let results = try await SectisCloud.createEach(connection, writes)
         let added = results.filter { $0 == .created }.count
         let existing = results.filter { $0 == .exists }.count
         let problems = results.compactMap { result -> String? in

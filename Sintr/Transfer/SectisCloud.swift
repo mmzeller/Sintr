@@ -8,6 +8,9 @@ enum SectisCloud {
         let message: String
         /// What Firebase actually said, for the Activity Log.
         var detail = ""
+        /// The HTTP status and Firestore status ("ALREADY_EXISTS"…); 0 when Firebase wasn't reached.
+        var httpStatus = 0
+        var code = ""
         var errorDescription: String? { message }
     }
 
@@ -78,7 +81,7 @@ enum SectisCloud {
             let id = SectisFormat.randomID()
             let write = try createWrite(connection, id: id, kind: "tag", record: SectisFormat.tagRecord(id: id, title: title),
                                         version: Int64(Date().timeIntervalSince1970 * 1000))
-            return try await batchWrite(connection, [write]).first == .created ? id : nil
+            return try await createEach(connection, [write]).first == .created ? id : nil
         } catch {
             return nil
         }
@@ -114,23 +117,19 @@ enum SectisCloud {
         ]
     }
 
-    /// Applies the writes, each on its own, and says what happened to each.
-    static func batchWrite(_ connection: Connection, _ writes: [[String: Any]]) async throws -> [WriteResult] {
+    /// Applies the writes one at a time and says what happened to each. (Each is its own
+    /// commit, the call the Firebase SDK uses: Firestore keeps batch writes for admin servers,
+    /// and in one commit a single item that's already there would stop all the others.)
+    static func createEach(_ connection: Connection, _ writes: [[String: Any]]) async throws -> [WriteResult] {
         var results: [WriteResult] = []
-        for start in stride(from: 0, to: writes.count, by: 400) {
-            let chunk = Array(writes[start..<min(start + 400, writes.count)])
-            let response = try await request("\(connection.documents):batchWrite", connection: connection, body: ["writes": chunk])
-            let statuses = (response as? [String: Any])?["status"] as? [[String: Any]] ?? []
-            for index in chunk.indices {
-                let status = index < statuses.count ? statuses[index] : [:]
-                let code = (status["code"] as? Int) ?? 0
-                switch code {
-                case 0: results.append(.created)
-                case 6, 9: results.append(.exists)   // ALREADY_EXISTS, FAILED_PRECONDITION
-                default:
-                    let name = [7: "PERMISSION_DENIED", 5: "NOT_FOUND", 8: "RESOURCE_EXHAUSTED"][code] ?? ""
-                    results.append(.failed(friendlyMessage(httpStatus: 0, code: name, message: status["message"] as? String ?? "")))
-                }
+        for write in writes {
+            do {
+                _ = try await request("\(connection.documents):commit", connection: connection, body: ["writes": [write]])
+                results.append(.created)
+            } catch let failure as Failure where failure.httpStatus == 409 || failure.code == "ALREADY_EXISTS" || failure.code == "FAILED_PRECONDITION" {
+                results.append(.exists)
+            } catch let failure as Failure where failure.httpStatus != 0 {
+                results.append(.failed(failure.message))
             }
         }
         return results
@@ -163,8 +162,10 @@ enum SectisCloud {
                ["api key", "api_key", "referer"].contains(where: { message.localizedCaseInsensitiveContains($0) }) {
                 return try await self.request(path, connection: connection, body: body, withKey: false)
             }
-            throw Failure(message: friendlyMessage(httpStatus: status, code: error?["status"] as? String ?? "", message: message),
-                          detail: "HTTP \(status) \(String(data: data.prefix(600), encoding: .utf8) ?? "")")
+            let code = error?["status"] as? String ?? ""
+            throw Failure(message: friendlyMessage(httpStatus: status, code: code, message: message),
+                          detail: "HTTP \(status) \(String(data: data.prefix(600), encoding: .utf8) ?? "")",
+                          httpStatus: status, code: code)
         }
         return object ?? [String: Any]()
     }
