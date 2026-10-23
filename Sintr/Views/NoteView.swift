@@ -266,25 +266,39 @@ private struct EnhancedView: View {
 
     var body: some View {
         if note.enhanced.isEmpty {
-            ContentUnavailableView {
-                Label("No enhanced notes yet", systemImage: "sparkles")
-            } description: {
-                Text("When you're done, Enhance combines what you typed with the transcript into clean notes with a summary, decisions and action items — on this \(Platform.deviceName), or with Claude if you choose.")
-            } actions: {
-                Button {
-                    appState.enhanceNoteID = noteID
-                } label: {
-                    Label("Enhance notes…", systemImage: "sparkles")
+            // Scrolls, so nothing hides behind the record bar at large text sizes.
+            ScrollView {
+                VStack(spacing: 14) {
+                    Image(systemName: "sparkles")
+                        .font(.largeTitle)
+                        .foregroundStyle(.tint)
+                    Text("No enhanced notes yet")
+                        .font(.title2.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                    Text("Enhance turns what you typed and the transcript into clean notes: a summary, decisions and action items.")
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button {
+                        appState.enhanceNoteID = noteID
+                    } label: {
+                        Label("Enhance notes…", systemImage: "sparkles")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.large)
+                    .disabled(recorder.noteID == noteID)
+                    .padding(.top, 4)
+                    #if os(iOS)
+                    if sectisReady {
+                        SectisCard(note: note, byDefault: sectisDefault, enhanced: false)
+                            .padding(.top, 12)
+                    }
+                    #endif
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(recorder.noteID == noteID)
-                #if os(iOS)
-                if sectisReady {
-                    SectisCard(note: note, byDefault: sectisDefault, enhanced: false)
-                        .frame(maxWidth: 420)
-                }
-                #endif
+                .frame(maxWidth: 480)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 32)
+                .frame(maxWidth: .infinity)
             }
         } else if editing {
             TextEditor(text: Binding(
