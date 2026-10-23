@@ -7,13 +7,27 @@ import CoreAudio
 
 /// Captures the microphone with AVAudioEngine.
 /// On iPhone it keeps recording with the screen locked (the app declares background audio).
+///
+/// Everything — starting, stopping, and restarting after a device change — happens on the
+/// queue it's given (the `CaptureController`'s), never on the main thread: a Bluetooth headset
+/// can take seconds to switch, and the window shouldn't wait for it.
 final class MicCapture: @unchecked Sendable {
     private let engine = AVAudioEngine()
+    private let queue: DispatchQueue
+    /// Device-change notifications are handled on `queue` too.
+    private let operations: OperationQueue
     private var handler: (@Sendable (AVAudioPCMBuffer) -> Void)?
     private var observers: [NSObjectProtocol] = []
-    /// Called on the main thread when recording was interrupted (a phone call, Siri…) and
-    /// whether it could resume.
+    /// Called on the capture queue when recording was interrupted (a phone call, Siri, a
+    /// device that went away) and whether it could resume.
     var onInterruption: ((_ resumed: Bool) -> Void)?
+
+    init(queue: DispatchQueue) {
+        self.queue = queue
+        operations = OperationQueue()
+        operations.underlyingQueue = queue
+        operations.maxConcurrentOperationCount = 1
+    }
 
     /// The name of the microphone in use right now.
     var deviceName: String? { Self.currentDeviceName(engine.inputNode) }
@@ -97,13 +111,15 @@ final class MicCapture: @unchecked Sendable {
     /// After a device change: try again a few times (a Bluetooth headset can take a moment).
     private func restartAfterChange(attempt: Int = 1) {
         guard handler != nil else { return }
+        HangWatch.step("Microphone: restarting after a device change (attempt \(attempt))")
+        defer { HangWatch.step("") }
         do {
             try installTapAndStart()
             ActivityLog.add("Microphone: restarted after a device change")
         } catch {
             ActivityLog.add("Microphone: restart attempt \(attempt) failed (\(error.localizedDescription))")
             guard attempt < 5 else { onInterruption?(false); return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            queue.asyncAfter(deadline: .now() + 1) { [weak self] in
                 self?.restartAfterChange(attempt: attempt + 1)
             }
         }
@@ -114,7 +130,7 @@ final class MicCapture: @unchecked Sendable {
         // Headphones plugged in, Bluetooth connected, a different input chosen: the engine
         // stops and needs a fresh tap in the new format.
         observers.append(center.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: operations
         ) { [weak self] _ in
             guard let self, self.handler != nil else { return }
             ActivityLog.add("Microphone: audio devices changed")
@@ -122,7 +138,7 @@ final class MicCapture: @unchecked Sendable {
         })
         #if os(iOS)
         observers.append(center.addObserver(
-            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: operations
         ) { [weak self] note in
             guard let self, self.handler != nil,
                   let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,

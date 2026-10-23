@@ -163,7 +163,7 @@ final class Recorder {
 
         // The hub is usually already listening (that's what drives the meters).
         phase = .preparing("Starting the microphone…")
-        let running = hub.ensureRunning(meeting: meeting)
+        let running = await hub.ensureRunning(meeting: meeting)
         guard hub.micIsRunning else { throw SpeechError.noMicrophone }
         if meeting.isOn, !running.isOn {
             notice = "Recording your microphone only — call audio couldn't start. (Details: Help → Activity Log.)"

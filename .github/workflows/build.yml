@@ -77,6 +77,22 @@ jobs:
           name: build-log-${{ matrix.platform }}
           path: build.log
 
+  audio:
+    name: Mac audio helpers
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use the newest Xcode 26
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
+          xcodebuild -version
+
+      - name: Check Sintr finds the processes that play an app's sound (Safari, Chrome, FaceTime)
+        run: bash scripts/ci-audio-check.sh
+
   sectis:
     name: Sectis format
     runs-on: macos-15

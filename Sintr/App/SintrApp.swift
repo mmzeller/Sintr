@@ -27,6 +27,9 @@ struct SintrApp: App {
         SintrCommandLine.runIfRequested()
         #endif
         ActivityLog.startSession()
+        #if os(macOS)
+        HangWatch.start()
+        #endif
         let hub = AudioHub()
         let post = PostProcessor()
         _hub = State(initialValue: hub)

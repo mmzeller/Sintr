@@ -10,7 +10,8 @@ import Foundation
 /// Core Audio process tap. No bot joins the call and nothing leaves the Mac.
 ///
 /// The tap is rebuilt automatically when the output device changes (AirPods connect) and, for a
-/// single app, when that app starts playing sound from a new process.
+/// single app, when that app starts playing sound from a new process. Started and stopped by
+/// the `CaptureController` on its own queue — never on the main thread.
 final class SystemAudioCapture: @unchecked Sendable {
     struct Signal: Sendable {
         /// Any audio buffers at all have arrived.
@@ -24,6 +25,8 @@ final class SystemAudioCapture: @unchecked Sendable {
     }
 
     let source: MeetingAudio
+    /// For a single app: which one, worked out on the main thread (it needs AppKit).
+    let target: AppTarget?
     private var handler: (@Sendable (AVAudioPCMBuffer) -> Void)?
     private let ioQueue = DispatchQueue(label: "Sintr.CallAudio.io", qos: .userInitiated)
     private let controlQueue = DispatchQueue(label: "Sintr.CallAudio.control")
@@ -51,8 +54,13 @@ final class SystemAudioCapture: @unchecked Sendable {
     private var rateCheckFrames: Double = 0
     private var rateChecked = false
 
-    init(source: MeetingAudio) {
+    init(source: MeetingAudio, target: AppTarget?) {
         self.source = source
+        if case .app(let bundleID) = source {
+            self.target = target ?? AppTarget(bundleID: bundleID, bundleName: nil, name: bundleID)
+        } else {
+            self.target = nil
+        }
     }
 
     var signal: Signal {
@@ -92,6 +100,7 @@ final class SystemAudioCapture: @unchecked Sendable {
     // MARK: Building the tap (always on controlQueue)
 
     private func rebuild(reason: String) throws {
+        defer { HangWatch.step("") }
         tearDownTap()
         guard !stopped else { return }
 
@@ -102,15 +111,19 @@ final class SystemAudioCapture: @unchecked Sendable {
             return
         case .allAudio:
             objects = []
-            let ownProcess = Self.audioObject(for: getpid()).map { [$0] } ?? []
+            let ownProcess = AudioProcesses.audioObject(for: getpid()).map { [$0] } ?? []
             description = CATapDescription(stereoGlobalTapButExcludeProcesses: ownProcess)
-        case .app(let bundleID):
-            objects = MeetingApps.audioObjects(for: bundleID)
+        case .app:
+            guard let target else { return }
+            HangWatch.step("Call audio: finding \(target.name)'s audio processes")
+            let found = AudioProcesses.matches(for: target)
+            objects = found.map(\.object).sorted()
             lock.withLock { _waiting = objects.isEmpty }
             guard !objects.isEmpty else {
-                ActivityLog.add("Call audio: waiting for \(MeetingApps.displayName(for: bundleID)) to use audio")
+                ActivityLog.add("Call audio: waiting for \(target.name) to use audio")
                 return  // The watcher builds the tap once the app makes sound.
             }
+            ActivityLog.add("Call audio: \(target.name) plays through \(AudioProcesses.describe(found))")
             description = CATapDescription(stereoMixdownOfProcesses: objects)
         }
         tappedObjects = objects
@@ -119,6 +132,7 @@ final class SystemAudioCapture: @unchecked Sendable {
         description.isPrivate = true
         description.muteBehavior = .unmuted
 
+        HangWatch.step("Call audio: creating the tap (\(reason))")
         var newTap = AudioObjectID(kAudioObjectUnknown)
         var status = AudioHardwareCreateProcessTap(description, &newTap)
         guard status == noErr else {
@@ -154,6 +168,7 @@ final class SystemAudioCapture: @unchecked Sendable {
                     ]
                 ],
             ]
+            HangWatch.step("Call audio: creating the capture device on \(outputName as String)")
             var newAggregate = AudioObjectID(kAudioObjectUnknown)
             status = AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &newAggregate)
             guard status == noErr else { throw CaptureError("create the call-audio device", status) }
@@ -173,7 +188,7 @@ final class SystemAudioCapture: @unchecked Sendable {
             }
             let what: String
             switch source {
-            case .app(let id): what = "\(MeetingApps.displayName(for: id)) (\(objects.count) process\(objects.count == 1 ? "" : "es"))"
+            case .app: what = "\(target?.name ?? "the app") (\(objects.count) process\(objects.count == 1 ? "" : "es"))"
             default: what = "all Mac audio"
             }
             ActivityLog.add("Call audio (\(reason)): tapping \(what) via \(outputName as String) — tap says \(Int(tapFormat.sampleRate)) Hz, device runs at \(Int(nominal)) Hz, \(tapFormat.channelCount) ch")
@@ -191,6 +206,7 @@ final class SystemAudioCapture: @unchecked Sendable {
             }
             guard status == noErr else { throw CaptureError("start reading call audio", status) }
 
+            HangWatch.step("Call audio: starting capture on \(outputName as String)")
             status = AudioDeviceStart(aggregateID, procID)
             guard status == noErr else { throw CaptureError("start call-audio capture", status) }
         } catch {
@@ -228,6 +244,9 @@ final class SystemAudioCapture: @unchecked Sendable {
     }
 
     private func tearDownTap() {
+        if aggregateID != kAudioObjectUnknown || tapID != kAudioObjectUnknown {
+            HangWatch.step("Call audio: removing the old capture device")
+        }
         if aggregateID != kAudioObjectUnknown {
             AudioDeviceStop(aggregateID, procID)
             if let procID { AudioDeviceDestroyIOProcID(aggregateID, procID) }
@@ -299,12 +318,12 @@ final class SystemAudioCapture: @unchecked Sendable {
     /// For a single app: every two seconds, check whether the app has started making sound
     /// from a process that isn't tapped yet, and rebuild the tap to include it.
     private func watchForAppAudio() {
-        guard case .app(let bundleID) = source else { return }
+        guard let target else { return }
         let timer = DispatchSource.makeTimerSource(queue: controlQueue)
         timer.schedule(deadline: .now() + 2, repeating: 2)
         timer.setEventHandler { [weak self] in
             guard let self, !self.stopped else { return }
-            let playing = Set(MeetingApps.audioObjects(for: bundleID, onlyPlaying: true))
+            let playing = Set(AudioProcesses.objects(for: target, onlyPlaying: true))
             let tapped = Set(self.tappedObjects)
             if !playing.isEmpty, !playing.isSubset(of: tapped) {
                 try? self.rebuild(reason: "app started playing from \(playing.subtracting(tapped).count) new process(es)")
@@ -340,31 +359,6 @@ final class SystemAudioCapture: @unchecked Sendable {
     }
 
     // MARK: Helpers
-
-    static func audioObject(for pid: pid_t) -> AudioObjectID? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var object = AudioObjectID(kAudioObjectUnknown)
-        var size = UInt32(MemoryLayout<AudioObjectID>.size)
-        var pid = pid
-        let status = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address,
-            UInt32(MemoryLayout<pid_t>.size), &pid, &size, &object)
-        return status == noErr && object != kAudioObjectUnknown ? object : nil
-    }
-
-    /// Whether a process is currently sending audio to an output device.
-    static func isPlaying(_ object: AudioObjectID) -> Bool {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioProcessPropertyIsRunningOutput,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var value: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr && value != 0
-    }
 
     static func read<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, default value: T) throws -> T {
         var address = AudioObjectPropertyAddress(
@@ -450,45 +444,11 @@ enum MeetingApps {
         return NSWorkspace.shared.icon(forFile: url.path)
     }
 
-    /// Core Audio objects for every process belonging to the app that has registered with the
-    /// audio system — including helpers (Teams, Chrome and Slack play sound from helper processes).
-    static func audioObjects(for bundleID: String, onlyPlaying: Bool = false) -> [AudioObjectID] {
-        let bundlePaths = NSWorkspace.shared.runningApplications
-            .filter { $0.bundleIdentifier == bundleID }
-            .compactMap { $0.bundleURL?.resolvingSymlinksInPath().path }
-        var pids: Set<pid_t> = []
-        if !bundlePaths.isEmpty {
-            for pid in allPIDs() {
-                guard let path = executablePath(pid) else { continue }
-                if bundlePaths.contains(where: { path.hasPrefix($0 + "/") }) { pids.insert(pid) }
-            }
-        }
-        // FaceTime (and iPhone calls on the Mac) are played by a system helper, not the app itself.
-        if bundleID == "com.apple.FaceTime" {
-            for pid in allPIDs() {
-                if let path = executablePath(pid), path.hasSuffix("/avconferenced") { pids.insert(pid) }
-            }
-        }
-        let objects = pids.compactMap(SystemAudioCapture.audioObject(for:)).sorted()
-        return onlyPlaying ? objects.filter(SystemAudioCapture.isPlaying) : objects
-    }
-
-    private static func allPIDs() -> [pid_t] {
-        let needed = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
-        guard needed > 0 else { return [] }
-        var pids = [pid_t](repeating: 0, count: Int(needed) / MemoryLayout<pid_t>.size + 64)
-        let bytes = pids.withUnsafeMutableBufferPointer {
-            proc_listpids(UInt32(PROC_ALL_PIDS), 0, $0.baseAddress, Int32($0.count * MemoryLayout<pid_t>.size))
-        }
-        guard bytes > 0 else { return [] }
-        return Array(pids.prefix(Int(bytes) / MemoryLayout<pid_t>.size)).filter { $0 > 0 }
-    }
-
-    private static func executablePath(_ pid: pid_t) -> String? {
-        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
-        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
-        guard length > 0 else { return nil }
-        return String(cString: buffer)
+    /// The app to record on its own, for the capture code (call on the main thread).
+    static func target(for bundleID: String) -> AppTarget {
+        let url = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == bundleID }?.bundleURL
+            ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        return AppTarget(bundleID: bundleID, bundleName: url?.lastPathComponent, name: displayName(for: bundleID))
     }
 }
 

@@ -58,6 +58,9 @@ final class AudioTap: @unchecked Sendable {
 
 /// Keeps the microphone (and, on the Mac, call audio) running so the live meters always show
 /// what's coming in — before and during a recording. A recording just attaches to it.
+///
+/// The starting and stopping itself happens on the `CaptureController`'s queue; this class only
+/// asks for what should run and shows the result, so the window never waits on audio hardware.
 @MainActor
 @Observable
 final class AudioHub {
@@ -83,12 +86,12 @@ final class AudioHub {
     /// Forwards things the person should know (an interruption, a device that went away).
     @ObservationIgnored var onNotice: ((String) -> Void)?
 
-    @ObservationIgnored private var mic: MicCapture?
-    @ObservationIgnored private var micUID: String?
-    #if os(macOS)
-    @ObservationIgnored private var call: SystemAudioCapture?
-    #endif
+    @ObservationIgnored private let controller = CaptureController()
+    /// The meeting audio actually running.
     @ObservationIgnored private var callSource: MeetingAudio = .off
+    /// Requests are numbered so a slow, older answer never overwrites a newer one.
+    @ObservationIgnored private var requests = 0
+    @ObservationIgnored private var applied = 0
     @ObservationIgnored private var pollTask: Task<Void, Never>?
     @ObservationIgnored private var settingsObserver: NSObjectProtocol?
     @ObservationIgnored private var lastSettings = ""
@@ -100,6 +103,9 @@ final class AudioHub {
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in self?.settingsChanged() }
+        }
+        controller.onNotice = { [weak self] text in
+            Task { @MainActor in self?.onNotice?(text) }
         }
     }
 
@@ -116,23 +122,26 @@ final class AudioHub {
             micName = "Microphone not allowed"
             return
         }
-        _ = ensureRunning(meeting: AppSettings.meetingAudioChoice)
+        _ = await ensureRunning(meeting: AppSettings.meetingAudioChoice)
         #endif
     }
 
     /// Stops all capture (when not recording).
     func stopAll() {
         guard !isRecording else { return }
-        stopMic()
-        #if os(macOS)
-        stopCall()
-        #endif
         pollTask?.cancel()
         pollTask = nil
         micLevel = 0
         callLevel = 0
         micHearing = false
         callState = .off
+        micRunning = false
+        requests += 1
+        let number = requests
+        Task {
+            let status = await controller.stopAll(micTap: micTap, callTap: callTap)
+            apply(status, number: number)
+        }
     }
 
     // MARK: Recording
@@ -140,23 +149,31 @@ final class AudioHub {
     /// Makes sure the microphone (and call audio, on the Mac) are being captured.
     /// Returns the meeting audio that actually started — `.off` if call capture failed.
     @discardableResult
-    func ensureRunning(meeting: MeetingAudio) -> MeetingAudio {
-        if mic == nil || micUID != AppSettings.microphoneDeviceUID {
-            startMic()
-        }
-        var effective = MeetingAudio.off
+    func ensureRunning(meeting: MeetingAudio) async -> MeetingAudio {
+        var target: AppTarget?
         #if os(macOS)
-        if meeting != callSource || (meeting.isOn && call == nil) {
-            stopCall()
-            if meeting.isOn { startCall(meeting) }
+        switch meeting {
+        case .app(let id):
+            let app = MeetingApps.target(for: id)
+            target = app
+            callName = app.name
+        case .allAudio:
+            callName = "Mac audio"
+        case .off:
+            break
         }
-        effective = call != nil ? callSource : .off
         #endif
+        requests += 1
+        let number = requests
+        let status = await controller.ensure(
+            micUID: AppSettings.microphoneDeviceUID, meeting: meeting, target: target,
+            micTap: micTap, callTap: callTap)
+        apply(status, number: number)
         startPolling()
-        return effective
+        return status.callSource
     }
 
-    var micIsRunning: Bool { mic != nil }
+    var micIsRunning: Bool { micRunning }
 
     func beginRecording(micSink: @escaping @Sendable (AVAudioPCMBuffer) -> Void,
                         callSink: (@Sendable (AVAudioPCMBuffer) -> Void)?) {
@@ -180,62 +197,14 @@ final class AudioHub {
 
     // MARK: Pieces
 
-    private func startMic() {
-        stopMic()
-        let capture = MicCapture()
-        let tap = micTap
-        capture.onInterruption = { [weak self] resumed in
-            self?.onNotice?(resumed
-                ? "Recording resumed after an interruption."
-                : "The microphone stopped (another app took it, or it was disconnected). Sintr keeps trying to get it back.")
-        }
-        do {
-            try capture.start { buffer in tap.process(buffer) }
-            mic = capture
-            micUID = AppSettings.microphoneDeviceUID
-            micRunning = true
-            micName = capture.deviceName ?? "Microphone"
-        } catch {
-            ActivityLog.add("Microphone: couldn't start (\(error.localizedDescription))")
-            micName = "Microphone unavailable"
-            micRunning = false
-        }
+    private func apply(_ status: CaptureController.Status, number: Int) {
+        guard number >= applied else { return }
+        applied = number
+        micRunning = status.micRunning
+        micName = status.micName
+        callSource = status.callSource
+        if !status.callSource.isOn { callState = .off }
     }
-
-    private func stopMic() {
-        mic?.stop()
-        mic = nil
-        micUID = nil
-        micRunning = false
-        micTap.reset()
-    }
-
-    #if os(macOS)
-    private func startCall(_ source: MeetingAudio) {
-        callSource = source
-        switch source {
-        case .app(let id): callName = MeetingApps.displayName(for: id)
-        default: callName = "Mac audio"
-        }
-        let capture = SystemAudioCapture(source: source)
-        let tap = callTap
-        do {
-            try capture.start { buffer in tap.process(buffer) }
-            call = capture
-        } catch {
-            ActivityLog.add("Call audio: couldn't start (\(error.localizedDescription))")
-            call = nil
-            callState = .off
-        }
-    }
-
-    private func stopCall() {
-        call?.stop()
-        call = nil
-        callSource = .off
-        callTap.reset()
-    }
-    #endif
 
     private func startPolling() {
         guard pollTask == nil else { return }
@@ -255,8 +224,7 @@ final class AudioHub {
     private func refreshStates() {
         micHearing = micTap.secondsSinceSound < 2
         #if os(macOS)
-        guard let call else { callState = .off; return }
-        let signal = call.signal
+        guard callSource.isOn, let signal = controller.callSignal else { callState = .off; return }
         // Asking macOS about the permission isn't free; do it now and then, and only while
         // nothing has been heard.
         if !signal.heardSound, SystemAudioPermission.canCheck, Date().timeIntervalSince(permissionChecked) > 3 {
