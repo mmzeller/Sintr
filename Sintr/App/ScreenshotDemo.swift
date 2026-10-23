@@ -1,7 +1,7 @@
 import Foundation
 
 /// For the automated screenshots (scripts/ci-screenshots.sh): launching with
-/// `--demo-note enhanced|new|review` opens a sample note, so the note screen can be checked
+/// `--demo-note enhanced|new|review|card|empty` opens a sample note, so the note screen can be checked
 /// at different text sizes without a phone. Does nothing without that launch argument.
 enum ScreenshotDemo {
     static let mode: String? = {
@@ -11,6 +11,9 @@ enum ScreenshotDemo {
     }()
 
     static var isActive: Bool { mode != nil }
+
+    /// "empty": a new note opened on the Enhanced tab.
+    static var opensOnEnhanced: Bool { mode == "empty" }
 
     /// Before the first screen: skip the recording setup sheet.
     static func prepare() {
@@ -22,7 +25,12 @@ enum ScreenshotDemo {
     @MainActor
     static func open(store: NoteStore, appState: AppState) {
         guard let mode else { return }
-        let note = mode == "new" ? newNote : enhancedNote
+        let note: Note
+        switch mode {
+        case "new", "empty": note = newNote
+        case "card": note = shortNote
+        default: note = enhancedNote
+        }
         _ = store.merge([note])
         appState.selection = note.id
         if mode == "review" {
@@ -35,6 +43,22 @@ enum ScreenshotDemo {
         note.id = UUID(uuidString: "5A5A5A5A-0000-4000-8000-000000000002")!
         note.created = Date()
         note.modified = Date()
+        return note
+    }
+
+    /// Short enough that the Sectis card and the byline after the notes are on screen.
+    private static var shortNote: Note {
+        var note = enhancedNote
+        note.id = UUID(uuidString: "5A5A5A5A-0000-4000-8000-000000000003")!
+        note.title = "Firmware follow-up"
+        note.enhanced = """
+            ## Summary
+            Quick check on the Pearl-2 update.
+
+            ## Action items
+            - [ ] Update the Pearl-2 firmware — Me, by Friday
+            - [ ] Send Vimeo the attendance numbers — Dana
+            """
         return note
     }
 

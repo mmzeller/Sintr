@@ -39,8 +39,9 @@ for SIZE in large extra-extra-extra-large accessibility-medium accessibility-ext
   xcrun simctl io "$UDID" screenshot "shots/setup-$SIZE.png" >/dev/null
 done
 
-# A sample enhanced note, a new note, and Review & send for Sectis (see ScreenshotDemo.swift).
-for MODE in enhanced new review; do
+# Sample notes (see ScreenshotDemo.swift): enhanced, new, Review & send for Sectis, a short
+# enhanced note showing the Sectis card, and an empty Enhanced tab.
+for MODE in enhanced new review card empty; do
   for SIZE in large extra-extra-extra-large accessibility-medium; do
     xcrun simctl ui "$UDID" content_size "$SIZE"
     xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null

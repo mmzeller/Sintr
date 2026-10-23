@@ -168,7 +168,7 @@ struct NoteView: View {
             Text("Your notes and transcript stay. Without the audio you can't re-transcribe it later.")
         }
         .onAppear {
-            if recorder.noteID != noteID, !note.enhanced.isEmpty { tab = .enhanced }
+            if recorder.noteID != noteID, !note.enhanced.isEmpty || ScreenshotDemo.opensOnEnhanced { tab = .enhanced }
             refreshSectis()
         }
         .onReceive(NotificationCenter.default.publisher(for: .sintrIntegrationsChanged)) { _ in
