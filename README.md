@@ -17,7 +17,7 @@ Private meeting notes for iPhone and Mac, in the spirit of Granola — but every
 - **AI apps and scripts (Mac):** an MCP server lets Claude Desktop, Claude Code and other AI apps read your notes when you allow it; a local API and a command line give scripts read-only access.
 - **Import and export** Markdown, plain text, Sintr backups and audio files. Notes are plain Markdown when exported, so Nextpad++ (and Parakeet) can open them.
 
-The options Parakeet shows next to its Record button — meeting audio, detect speakers, save audio, language — sit right under Sintr's Record button. Everything else is in **Settings** (the gear in the toolbar, or Sintr → Settings… / ⌘,).
+The options Parakeet shows next to its Record button — meeting audio, detect speakers, save audio, language — sit right under Sintr's Record button on the Mac; on iPhone they're in the options menu (the sliders icon) beside it, so the note keeps the screen. Everything else is in **Settings** (the gear in the toolbar, or Sintr → Settings… / ⌘,).
 
 ## Privacy: what goes where
 
@@ -186,7 +186,7 @@ Sintr can put the action items that are yours into your [Sectis](https://github.
 2. In Sintr: **Settings → Integrations → Sectis**, paste the code into **Join code** and press **Save**. **Test connection** checks it.
 3. Turn on **Send after Enhance** if you want new notes to send their action items by themselves.
 
-**Each note has its own Send to Sectis switch**, under its title (and in the Enhance window). It starts the way **Send after Enhance** is set; turn it off in a note to skip that meeting, or to look the items over before they go.
+**Each note has its own Send to Sectis switch**: next to the date on the Mac, on the Enhanced tab on iPhone, and in the Enhance window on both. It starts the way **Send after Enhance** is set; turn it off in a note to skip that meeting, or to look the items over before they go.
 
 **Review & send** (on the Enhanced tab, or **Share → Send to → Sectis**) lists your action items from that note. Untick any you don't want, fix the wording, add, change or remove a deadline, then **Send**. The Enhanced tab also shows how many items are yours and when they were last sent.
 

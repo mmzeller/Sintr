@@ -120,6 +120,8 @@ enum IntegrationSettings {
     }
 
     static func isConfigured(_ kind: IntegrationKind) -> Bool {
+        // The screenshot demo shows the Sectis parts of a note without a join code.
+        if kind == .sectis, ScreenshotDemo.isActive { return true }
         if kind.needsKey, secret(kind) == nil { return false }
         if kind.targetLabel != nil, !kind.targetIsOptional,
            config(kind).target.trimmingCharacters(in: .whitespaces).isEmpty { return false }

@@ -57,6 +57,7 @@ struct ContentView: View {
                 }
             }
         }
+        .task { ScreenshotDemo.open(store: store, appState: appState) }
         .onChange(of: appState.folderPick) { _, pick in
             if let pick { activePick = pick }
         }

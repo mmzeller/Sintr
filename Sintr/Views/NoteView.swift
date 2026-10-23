@@ -18,6 +18,8 @@ struct NoteView: View {
     /// again when Settings change, rather than from the Keychain on every redraw).
     @State private var sectisReady = false
     @State private var sectisDefault = false
+    /// Editing the enhanced notes' Markdown (Edit/Done in the toolbar).
+    @State private var editingEnhanced = false
 
     enum Tab: String, CaseIterable, Identifiable {
         case myNotes = "My notes"
@@ -46,6 +48,7 @@ struct NoteView: View {
                 TextField("Title", text: binding(\.title), prompt: Text("Untitled note"))
                     .font(.title2.weight(.semibold))
                     .textFieldStyle(.plain)
+                #if os(macOS)
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) {
                         subtitleText
@@ -57,9 +60,13 @@ struct NoteView: View {
                         sectisSwitch
                     }
                 }
+                #else
+                // iPhone: the Sectis switch is on the Enhanced tab, so this stays one short line.
+                subtitleText
+                #endif
             }
             .padding(.horizontal)
-            .padding(.top, 12)
+            .padding(.top, Platform.isMac ? 12 : 4)
 
             Picker("Show", selection: $tab) {
                 ForEach(tabs) { tab in
@@ -69,7 +76,7 @@ struct NoteView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .padding(.horizontal)
-            .padding(.vertical, 10)
+            .padding(.vertical, Platform.isMac ? 10 : 8)
 
             Divider()
 
@@ -79,7 +86,8 @@ struct NoteView: View {
             case .transcript:
                 TranscriptView(noteID: noteID)
             case .enhanced:
-                EnhancedView(noteID: noteID, sectisReady: sectisReady)
+                EnhancedView(noteID: noteID, editing: $editingEnhanced,
+                             sectisReady: sectisReady, sectisDefault: sectisDefault)
             case .ask:
                 AskView(scope: .note(noteID))
             case .translations:
@@ -87,19 +95,30 @@ struct NoteView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            RecordBar(noteID: noteID)
+            // Out of the way while you edit the enhanced notes — unless you're recording.
+            if !editingEnhanced || recorder.isActive {
+                RecordBar(noteID: noteID)
+            }
         }
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .toolbar {
+            if tab == .enhanced, !note.enhanced.isEmpty {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(editingEnhanced ? "Done" : "Edit") { editingEnhanced.toggle() }
+                        .fontWeight(editingEnhanced ? .semibold : .regular)
+                        .help(editingEnhanced ? "Finish editing" : "Edit the enhanced notes")
+                }
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
+                    editingEnhanced = false
                     appState.enhanceNoteID = noteID
                 } label: {
                     Label("Enhance", systemImage: "sparkles")
                 }
-                .help("Turn your notes and the transcript into clean notes")
+                .help(note.enhanced.isEmpty ? "Turn your notes and the transcript into clean notes" : "Enhance again")
                 .disabled(recorder.noteID == noteID)
 
                 Button {
@@ -114,7 +133,12 @@ struct NoteView: View {
                     Button("Export…", systemImage: "square.and.arrow.up") {
                         appState.exportRequest = .init(noteID: noteID)
                     }
-                    Button("Copy as Markdown", systemImage: "doc.on.doc") {
+                    if !note.enhanced.isEmpty {
+                        Button("Copy enhanced notes", systemImage: "doc.on.doc") {
+                            Clipboard.copy(note.enhanced)
+                        }
+                    }
+                    Button("Copy as Markdown", systemImage: "doc.plaintext") {
                         Clipboard.copy(Exporter.markdown(note))
                     }
                     Menu("Send to", systemImage: "paperplane") {
@@ -150,6 +174,9 @@ struct NoteView: View {
         .onReceive(NotificationCenter.default.publisher(for: .sintrIntegrationsChanged)) { _ in
             refreshSectis()
         }
+        .onChange(of: tab) { _, newTab in
+            if newTab != .enhanced { editingEnhanced = false }
+        }
         .onChange(of: note.enhancedAt) { _, newValue in
             if newValue != nil { tab = .enhanced }
         }
@@ -163,9 +190,11 @@ struct NoteView: View {
         Text(subtitle)
             .font(.subheadline)
             .foregroundStyle(.secondary)
+            .lineLimit(2)
     }
 
-    /// This note's own switch: whether Enhance sends your action items to Sectis.
+    /// Mac: this note's own switch, next to the date: whether Enhance sends your action items
+    /// to Sectis. (On iPhone it's on the Enhanced tab.)
     @ViewBuilder private var sectisSwitch: some View {
         if sectisReady {
             Toggle(isOn: Binding(
@@ -185,8 +214,12 @@ struct NoteView: View {
         sectisDefault = Sectis.isOnByDefault
     }
 
+    /// "Oct 23, 8:52 AM · 36 min" (the year only when it isn't this year).
     private var subtitle: String {
-        var parts = [note.created.formatted(date: .abbreviated, time: .shortened)]
+        let thisYear = Calendar.current.isDate(note.created, equalTo: Date(), toGranularity: .year)
+        var parts = [thisYear
+            ? note.created.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+            : note.created.formatted(date: .abbreviated, time: .shortened)]
         if note.duration > 0 { parts.append(Note.durationText(note.duration)) }
         if !note.recordings.isEmpty { parts.append("audio saved") }
         return parts.joined(separator: " · ")
@@ -218,124 +251,127 @@ private struct MyNotesEditor: View {
 
 // MARK: - Enhanced
 
+/// The clean notes, with nothing above them: Edit/Done is in the toolbar, Copy is in the
+/// Share menu, and who wrote them and the Sectis card follow at the end.
 private struct EnhancedView: View {
     let noteID: UUID
+    @Binding var editing: Bool
     let sectisReady: Bool
+    let sectisDefault: Bool
     @Environment(NoteStore.self) private var store
     @Environment(AppState.self) private var appState
     @Environment(Recorder.self) private var recorder
-    @State private var editing = false
 
     private var note: Note { store.note(noteID) ?? Note() }
 
     var body: some View {
         if note.enhanced.isEmpty {
-            VStack(spacing: 14) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 40))
-                    .foregroundStyle(.tint)
-                Text("No enhanced notes yet")
-                    .font(.title3.weight(.semibold))
-                Text("When you're done, Enhance combines what you typed with the transcript into clean notes with a summary, decisions and action items. You choose where that happens: on this \(Platform.deviceName), or by sending it to Claude.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: 480)
+            ContentUnavailableView {
+                Label("No enhanced notes yet", systemImage: "sparkles")
+            } description: {
+                Text("When you're done, Enhance combines what you typed with the transcript into clean notes with a summary, decisions and action items — on this \(Platform.deviceName), or with Claude if you choose.")
+            } actions: {
                 Button {
                     appState.enhanceNoteID = noteID
                 } label: {
                     Label("Enhance notes…", systemImage: "sparkles")
-                        .frame(minHeight: 30)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .disabled(recorder.noteID == noteID)
+                #if os(iOS)
+                if sectisReady {
+                    SectisCard(note: note, byDefault: sectisDefault, enhanced: false)
+                        .frame(maxWidth: 420)
+                }
+                #endif
             }
-            .padding(30)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if editing {
+            TextEditor(text: Binding(
+                get: { store.note(noteID)?.enhanced ?? "" },
+                set: { value in store.edit(noteID) { $0.enhanced = value } }))
+                .font(.body.monospaced())
+                .scrollContentBackground(.hidden)
+                .padding(8)
         } else {
-            VStack(spacing: 0) {
-                HStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    MarkdownView(markdown: note.enhanced)
+                    if sectisReady {
+                        SectisCard(note: note, byDefault: sectisDefault, enhanced: true)
+                    }
                     if !note.enhancedBy.isEmpty {
-                        Label(byline, systemImage: "sparkles")
-                            .font(.caption)
+                        Text(byline)
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    Spacer()
-                    Button(editing ? "Done" : "Edit") { editing.toggle() }
-                    Button("Copy", systemImage: "doc.on.doc") { Clipboard.copy(note.enhanced) }
-                        .labelStyle(.iconOnly)
-                    Button("Redo", systemImage: "arrow.clockwise") { appState.enhanceNoteID = noteID }
-                        .labelStyle(.iconOnly)
-                        .help("Enhance again")
-                }
-                .buttonStyle(.borderless)
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-                Divider()
-                if sectisReady, !editing {
-                    SectisStatusRow(note: note)
-                    Divider()
-                }
-                if editing {
-                    TextEditor(text: Binding(
-                        get: { store.note(noteID)?.enhanced ?? "" },
-                        set: { value in store.edit(noteID) { $0.enhanced = value } }))
-                        .font(.body.monospaced())
-                        .scrollContentBackground(.hidden)
-                        .padding(8)
-                } else {
-                    ScrollView {
-                        MarkdownView(markdown: note.enhanced)
-                            .padding()
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 
+    /// "Enhanced by Apple Intelligence on this iPhone · Oct 23, 8:55 AM".
     private var byline: String {
-        var text = note.enhancedBy
+        var text = "Enhanced by \(note.enhancedBy)"
         if let date = note.enhancedAt { text += " · " + date.formatted(date: .abbreviated, time: .shortened) }
         return text
     }
 }
 
-/// On the Enhanced tab: how many action items are yours, whether they've gone to Sectis,
-/// and Review & send.
-private struct SectisStatusRow: View {
+/// The note's Sectis card: on iPhone its Send to Sectis switch; after Enhance, how many action
+/// items are yours, whether they've gone, and Review & send.
+private struct SectisCard: View {
     let note: Note
+    let byDefault: Bool
+    /// The note has enhanced notes (so there are items to show).
+    let enhanced: Bool
+    @Environment(NoteStore.self) private var store
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        let count = Sectis.myItems(in: note).count
-        HStack(spacing: 8) {
-            Image(systemName: "checklist")
-                .foregroundStyle(.secondary)
-            Text(status(count))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            Spacer(minLength: 8)
-            Button("Review & send…") {
-                appState.sendRequest = .init(noteID: note.id, kind: .sectis)
+        VStack(alignment: .leading, spacing: 12) {
+            #if os(iOS)
+            Toggle(isOn: Binding(
+                get: { Sectis.isOn(for: store.note(note.id), byDefault: byDefault) },
+                set: { value in store.edit(note.id) { $0.sendToSectis = value } })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Send to Sectis")
+                    Text("After Enhance, your action items go to your Sectis Inbox.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
-            .disabled(count == 0)
-            .help("Pick which action items go to Sectis and adjust them first")
+            #endif
+            if enhanced {
+                #if os(iOS)
+                Divider()
+                #endif
+                let count = Sectis.myItems(in: note).count
+                Label(status(count), systemImage: "checklist")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Button("Review & send…") {
+                    appState.sendRequest = .init(noteID: note.id, kind: .sectis)
+                }
+                .buttonStyle(.bordered)
+                .disabled(count == 0)
+                .help("Pick which action items go to Sectis and adjust them first")
+            }
         }
-        .buttonStyle(.borderless)
-        .padding(.horizontal)
-        .padding(.vertical, 6)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func status(_ count: Int) -> String {
-        guard count > 0 else { return "No action items for you" }
+        guard count > 0 else { return "No action items for you in this note" }
         let items = "\(count) action item\(count == 1 ? "" : "s") for you"
         if let sent = Sectis.lastSend(of: note) {
             return "\(items) · sent to Sectis \(sent.date.formatted(date: .abbreviated, time: .shortened))"
         }
-        return "\(items) · not sent to Sectis"
+        return "\(items) · not sent yet"
     }
 }
 

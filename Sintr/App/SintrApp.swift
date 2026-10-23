@@ -17,6 +17,7 @@ struct SintrApp: App {
 
     init() {
         AppSettings.register()
+        ScreenshotDemo.prepare()
         PortableSettings.start()
         SpeakerDetector.blockNetwork()
         #if os(macOS)

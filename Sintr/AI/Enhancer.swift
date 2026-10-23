@@ -126,7 +126,8 @@ enum Enhancer {
             Title: \(note.displayTitle)
             Date: \(date)
             \(glossaryLine)\(NotesLanguage.instruction)
-            Use this layout:
+            Use this layout. The text under each heading only describes what belongs there — \
+            write the real content from this meeting in its place, and never copy the description:
             \(template.instructions)
 
             MY NOTES:

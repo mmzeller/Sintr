@@ -29,7 +29,7 @@ struct RecordBar: View {
             content
         }
         .padding(.horizontal)
-        .padding(.vertical, 12)
+        .padding(.vertical, Platform.isMac ? 12 : 8)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
     }
@@ -37,11 +37,29 @@ struct RecordBar: View {
     @ViewBuilder private var content: some View {
         switch recorder.phase {
         case .idle:
+            #if os(macOS)
             VStack(alignment: .leading, spacing: 10) {
                 recordButtonRow
                 LiveInputs()
                 RecordingOptions()
             }
+            #else
+            // iPhone: one slim row so the note gets the screen. The options live in a menu;
+            // the hint only shows on a note that hasn't been recorded yet.
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    compactRecordButton
+                    Spacer(minLength: 0)
+                    RecordingOptionsMenu()
+                }
+                if !hasRecording {
+                    Text(hint)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            #endif
         case .preparing(let message):
             if isThisNote {
                 progressRow(message, value: recorder.downloadProgress)
@@ -66,6 +84,25 @@ struct RecordBar: View {
                 ProgressView(value: value)
             }
         }
+    }
+
+    private var hasRecording: Bool { (store.note(noteID)?.duration ?? 0) > 0 }
+
+    /// iPhone: a capsule Record button that stays on one line at every text size.
+    private var compactRecordButton: some View {
+        Button {
+            Task { await recorder.start(noteID: noteID, store: store) }
+        } label: {
+            Label(hasRecording ? "Record more" : "Record", systemImage: "record.circle")
+                .font(.headline)
+                .lineLimit(1)
+        }
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
+        .tint(.red)
+        .fixedSize()
+        .disabled(post.isBusy(with: noteID))
     }
 
     private var recordButtonRow: some View {
@@ -414,6 +451,49 @@ struct RecordingOptions: View {
             }
         }
         .fixedSize()
+    }
+}
+
+/// iPhone: the recording options in a menu next to the Record button — detect speakers,
+/// save audio and language — instead of rows that take over the screen.
+struct RecordingOptionsMenu: View {
+    @AppStorage(AppSettings.detectSpeakers) private var detectSpeakers = true
+    @AppStorage(AppSettings.keepRecordings) private var saveAudio = true
+    @AppStorage(AppSettings.language) private var language = ""
+    @State private var locales: [Locale] = []
+
+    var body: some View {
+        Menu {
+            Section {
+                Toggle(isOn: $detectSpeakers) {
+                    Label("Detect speakers", systemImage: "person.2.wave.2")
+                }
+                Toggle(isOn: $saveAudio) {
+                    Label("Save audio", systemImage: "waveform")
+                }
+            }
+            Section {
+                Picker(selection: $language) {
+                    Text("Automatic").tag("")
+                    ForEach(locales, id: \.identifier) { locale in
+                        Text(SpeechSupport.displayName(locale)).tag(locale.identifier)
+                    }
+                } label: {
+                    Label("Language", systemImage: "globe")
+                }
+                .pickerStyle(.menu)
+            }
+            Section {
+                Text("Transcribed on this \(Platform.deviceName). Keeps going with the screen locked.")
+            }
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.title3)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("Recording options")
+        .task { locales = await SpeechSupport.supportedLocales() }
     }
 }
 
