@@ -1,5 +1,10 @@
 import Foundation
 
+extension Notification.Name {
+    /// A key, token, join code or integration setting changed.
+    static let sintrIntegrationsChanged = Notification.Name("SintrIntegrationsChanged")
+}
+
 /// Apps a note can be sent to. Nothing is sent unless you press Send — or, for Sectis, Notion
 /// and webhooks only, you turn on "Send automatically after Enhance" for that app.
 /// Keys, tokens and the Sectis join code are kept in the Keychain.
@@ -105,10 +110,14 @@ enum IntegrationSettings {
         if let data = try? JSONEncoder().encode(all), let text = String(data: data, encoding: .utf8) {
             UserDefaults.standard.set(text, forKey: AppSettings.integrations)
         }
+        NotificationCenter.default.post(name: .sintrIntegrationsChanged, object: nil)
     }
 
     static func secret(_ kind: IntegrationKind) -> String? { SecretStore.get(kind.secretAccount) }
-    static func setSecret(_ value: String?, for kind: IntegrationKind) { SecretStore.set(kind.secretAccount, value) }
+    static func setSecret(_ value: String?, for kind: IntegrationKind) {
+        SecretStore.set(kind.secretAccount, value)
+        NotificationCenter.default.post(name: .sintrIntegrationsChanged, object: nil)
+    }
 
     static func isConfigured(_ kind: IntegrationKind) -> Bool {
         if kind.needsKey, secret(kind) == nil { return false }

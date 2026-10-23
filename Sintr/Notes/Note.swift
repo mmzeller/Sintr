@@ -167,6 +167,9 @@ struct Note: Codable, Identifiable, Hashable, Sendable {
     var chat: [ChatMessage] = []
     /// Where this note has been sent.
     var sentTo: [NoteSend] = []
+    /// This note's "Send to Sectis" switch: whether Enhance sends your action items.
+    /// Nil until you change it, so it follows Settings → Integrations → Sectis.
+    var sendToSectis: Bool?
 
     init() {}
 
@@ -253,6 +256,7 @@ struct Note: Codable, Identifiable, Hashable, Sendable {
         folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
         chat = try c.decodeIfPresent([ChatMessage].self, forKey: .chat) ?? []
         sentTo = try c.decodeIfPresent([NoteSend].self, forKey: .sentTo) ?? []
+        sendToSectis = try c.decodeIfPresent(Bool.self, forKey: .sendToSectis)
     }
 }
 

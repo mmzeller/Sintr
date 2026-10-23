@@ -417,7 +417,8 @@ struct RecordingOptions: View {
     }
 }
 
-private struct OptionToggleStyle: ViewModifier {
+/// Small on/off options: checkboxes on the Mac, tinted buttons on iPhone.
+struct OptionToggleStyle: ViewModifier {
     func body(content: Content) -> some View {
         #if os(macOS)
         content.toggleStyle(.checkbox)

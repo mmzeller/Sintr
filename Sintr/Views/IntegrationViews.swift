@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// "Send to Notion / HubSpot / …" for one note.
+/// "Send to Notion / HubSpot / …" for one note. (Sectis has its own sheet, where you pick
+/// and adjust the action items: `SectisSendSheet`.)
 struct SendSheet: View {
     let noteID: UUID
     let kind: IntegrationKind
@@ -15,21 +16,15 @@ struct SendSheet: View {
     @State private var errorText: String?
 
     private var note: Note { store.note(noteID) ?? Note() }
-    /// Sectis gets only your action items.
-    private var items: [ActionItem] { kind == .sectis ? Sectis.myItems(in: note) : [] }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
                     LabeledContent("Note", value: note.displayTitle)
-                    if kind == .sectis {
-                        LabeledContent("Sends", value: items.isEmpty ? "Nothing yet" : "Your action items (\(items.count))")
-                    } else {
-                        LabeledContent("Sends", value: note.enhanced.isEmpty ? (note.myNotes.isEmpty ? "Title only" : "Your notes") : "Enhanced notes")
-                        if !note.transcript.isEmpty {
-                            Toggle("Include the transcript", isOn: $includeTranscript)
-                        }
+                    LabeledContent("Sends", value: note.enhanced.isEmpty ? (note.myNotes.isEmpty ? "Title only" : "Your notes") : "Enhanced notes")
+                    if !note.transcript.isEmpty {
+                        Toggle("Include the transcript", isOn: $includeTranscript)
                     }
                     if kind.needsContact {
                         TextField("Their email address", text: $email)
@@ -40,35 +35,9 @@ struct SendSheet: View {
                             .autocorrectionDisabled()
                     }
                 } footer: {
-                    if kind == .sectis {
-                        Text("Added to your Sectis Inbox, tagged \(Sectis.tagName). Each to-do is encrypted on this \(Platform.deviceName) before it's sent, and an item already sent from this note isn't added twice.")
-                    } else {
-                        Text(kind.needsContact
-                             ? "The note is added to the person in \(kind.title) with this email address."
-                             : "Sent to \(kind.title) over an encrypted connection. Nothing else on this \(Platform.deviceName) is sent.")
-                    }
-                }
-
-                if kind == .sectis {
-                    Section("Your action items") {
-                        if items.isEmpty {
-                            Text(Sectis.noItemsMessage)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(items, id: \.self) { item in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Label(item.title, systemImage: "circle")
-                                    if let deadline = item.deadline {
-                                        Text("Deadline \(Self.dayText(deadline))")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .padding(.leading, 28)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    Text(kind.needsContact
+                         ? "The note is added to the person in \(kind.title) with this email address."
+                         : "Sent to \(kind.title) over an encrypted connection. Nothing else on this \(Platform.deviceName) is sent.")
                 }
 
                 if let result {
@@ -108,7 +77,7 @@ struct SendSheet: View {
                         ProgressView().controlSize(.small)
                     } else {
                         Button("Send") { send() }
-                            .disabled(result != nil || (kind.needsContact && !email.contains("@")) || (kind == .sectis && items.isEmpty))
+                            .disabled(result != nil || (kind.needsContact && !email.contains("@")))
                     }
                 }
             }
@@ -117,15 +86,6 @@ struct SendSheet: View {
         #if os(macOS)
         .frame(minWidth: 460, minHeight: 360)
         #endif
-    }
-
-    /// "2026-10-31" → "Oct 31, 2026".
-    static func dayText(_ day: String) -> String {
-        let parts = day.split(separator: "-").compactMap { Int($0) }
-        guard parts.count == 3,
-              let date = Calendar.current.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
-        else { return day }
-        return date.formatted(date: .abbreviated, time: .omitted)
     }
 
     private func send() {
@@ -147,19 +107,205 @@ struct SendSheet: View {
     }
 }
 
-/// After Enhance: send to the apps set to receive notes automatically.
+/// Review your action items before they go to Sectis: untick any you don't want, and fix
+/// the wording or the deadline.
+struct SectisSendSheet: View {
+    let noteID: UUID
+
+    @Environment(NoteStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @State private var drafts: [Draft] = []
+    @State private var loaded = false
+    @State private var sending = false
+    @State private var result: NoteSend?
+    @State private var errorText: String?
+
+    struct Draft: Identifiable {
+        let id = UUID()
+        let item: ActionItem
+        var include = true
+        var title: String
+        var hasDeadline: Bool
+        var deadline: Date
+
+        init(_ item: ActionItem) {
+            self.item = item
+            title = item.title
+            let due = item.deadline.flatMap(Sectis.date(fromDay:))
+            hasDeadline = due != nil
+            deadline = due ?? Calendar.current.startOfDay(for: Date())
+        }
+
+        /// The item as it will be sent.
+        var adjusted: ActionItem {
+            var result = item
+            result.originalTitle = item.idTitle
+            result.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            result.deadline = hasDeadline ? Sectis.day(from: deadline) : nil
+            return result
+        }
+    }
+
+    private var note: Note { store.note(noteID) ?? Note() }
+    private var sendTitle: String { chosen.isEmpty ? "Send" : "Send \(chosen.count)" }
+    private var chosen: [ActionItem] {
+        drafts.filter { $0.include && !$0.title.trimmingCharacters(in: .whitespaces).isEmpty }.map(\.adjusted)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    if loaded, drafts.isEmpty {
+                        Text(Sectis.noItemsMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach($drafts) { $draft in
+                        DraftRow(draft: $draft)
+                    }
+                } header: {
+                    Text("Your action items in “\(note.displayTitle)”")
+                } footer: {
+                    Text("Untick any you don't want and fix the wording or deadline. They go to your Sectis Inbox, tagged \(Sectis.tagName), encrypted on this \(Platform.deviceName) first. One that's already in Sectis isn't added twice — even if you reworded it.")
+                }
+
+                if let result {
+                    Section {
+                        Label("Sent to \(result.destination)", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                }
+                if let errorText {
+                    Section {
+                        Label(errorText, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    }
+                }
+                let earlier = note.sentTo.filter { $0.destination.hasPrefix(IntegrationKind.sectis.title) }
+                if !earlier.isEmpty {
+                    Section("Sent before") {
+                        ForEach(earlier.suffix(5), id: \.self) { sent in
+                            LabeledContent(sent.destination, value: sent.date.formatted(date: .abbreviated, time: .shortened))
+                        }
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle("Send to Sectis")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(result == nil ? "Cancel" : "Done") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if sending {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button(sendTitle) { send() }
+                            .disabled(result != nil || chosen.isEmpty)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            guard !loaded else { return }
+            drafts = Sectis.myItems(in: note).map(Draft.init)
+            loaded = true
+        }
+        #if os(macOS)
+        .frame(minWidth: 520, minHeight: 440)
+        #endif
+    }
+
+    private func send() {
+        errorText = nil
+        sending = true
+        let note = self.note
+        let items = chosen
+        Task {
+            do {
+                guard let code = IntegrationSettings.secret(.sectis) else { throw IntegrationError.notSetUp(.sectis) }
+                let sent = try await Sectis.send(note, items: items, joinCode: code)
+                store.edit(noteID) { $0.sentTo.append(sent) }
+                result = sent
+            } catch {
+                errorText = error.localizedDescription
+            }
+            sending = false
+        }
+    }
+
+    /// One action item: a tick, its wording and its deadline.
+    private struct DraftRow: View {
+        @Binding var draft: Draft
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Button {
+                        draft.include.toggle()
+                    } label: {
+                        Image(systemName: draft.include ? "checkmark.circle.fill" : "circle")
+                            .font(.title3)
+                            .foregroundStyle(draft.include ? Color.accentColor : Color.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel(Text(draft.include ? "Will be sent" : "Won't be sent"))
+                    .help(Text(draft.include ? "Don't send this one" : "Send this one"))
+                    TextField("To-do", text: $draft.title, prompt: Text("To-do"), axis: .vertical)
+                        .labelsHidden()
+                        .foregroundStyle(draft.include ? .primary : .secondary)
+                }
+                HStack(spacing: 8) {
+                    if draft.hasDeadline {
+                        Image(systemName: "flag")
+                            .foregroundStyle(.secondary)
+                        DatePicker("Deadline", selection: $draft.deadline, displayedComponents: .date)
+                            .labelsHidden()
+                            .fixedSize()
+                        Button {
+                            draft.hasDeadline = false
+                        } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Remove deadline")
+                        .help("No deadline")
+                    } else {
+                        Button {
+                            draft.hasDeadline = true
+                        } label: {
+                            Label("Add deadline", systemImage: "flag")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                .font(.callout)
+                .padding(.leading, 34)
+                .disabled(!draft.include)
+            }
+            .padding(.vertical, 2)
+        }
+    }
+}
+
+/// After Enhance: send to the apps set to receive notes automatically — for Sectis, when the
+/// note's own "Send to Sectis" switch is on.
 @MainActor
 enum AutoSend {
     static func afterEnhance(_ noteID: UUID, store: NoteStore) {
         guard let note = store.note(noteID) else { return }
-        for kind in IntegrationKind.allCases where kind.canAutoSend && IntegrationSettings.config(kind).autoSend
-            && IntegrationSettings.isConfigured(kind) {
+        for kind in IntegrationKind.allCases where kind.canAutoSend && IntegrationSettings.isConfigured(kind) {
             if kind == .sectis {
                 // Once per note: Enhance words items a little differently each time, so sending
-                // again would add near-duplicates. Share → Send to → Sectis sends new ones later.
-                if note.sentTo.contains(where: { $0.destination.hasPrefix(kind.title) }) || Sectis.myItems(in: note).isEmpty {
+                // again would add near-duplicates. Review & send on the Enhanced tab sends new ones.
+                guard Sectis.isOn(for: note), Sectis.lastSend(of: note) == nil, !Sectis.myItems(in: note).isEmpty else {
                     continue
                 }
+            } else if !IntegrationSettings.config(kind).autoSend {
+                continue
             }
             let include = IntegrationSettings.config(kind).includeTranscript
             Task {
@@ -252,7 +398,13 @@ private struct IntegrationSettingsRow: View {
                 if kind.sendsWholeNote {
                     Toggle("Include the transcript", isOn: $config.includeTranscript)
                 }
-                if kind.canAutoSend {
+                if kind == .sectis {
+                    Toggle("Send after Enhance", isOn: $config.autoSend)
+                    Text("Each note has its own Send to Sectis switch, under its title. This is what that switch starts as; turn it off in a note to skip that meeting, or to look the items over and send them yourself.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if kind.canAutoSend {
                     Toggle("Send automatically after Enhance", isOn: $config.autoSend)
                 }
                 HStack {

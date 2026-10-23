@@ -121,6 +121,12 @@ struct ActionItem: Hashable, Sendable {
     var line: String
     /// Lines indented under it.
     var details: [String] = []
+    /// The wording it was first read with, when you've changed `title` before sending.
+    var originalTitle: String?
+
+    /// What its Sectis ID is made from: the first wording, so an item you reworded and sent
+    /// isn't added a second time.
+    var idTitle: String { originalTitle ?? title }
 }
 
 /// Finds the unchecked action items in Markdown notes and works out whose they are.

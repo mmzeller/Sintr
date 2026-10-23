@@ -14,6 +14,10 @@ struct NoteView: View {
     @Environment(AppState.self) private var appState
     @State private var tab: Tab = .myNotes
     @State private var confirmDeleteAudio = false
+    /// Sectis is set up, and what a note's Send to Sectis switch starts as (read once, and
+    /// again when Settings change, rather than from the Keychain on every redraw).
+    @State private var sectisReady = false
+    @State private var sectisDefault = false
 
     enum Tab: String, CaseIterable, Identifiable {
         case myNotes = "My notes"
@@ -42,9 +46,17 @@ struct NoteView: View {
                 TextField("Title", text: binding(\.title), prompt: Text("Untitled note"))
                     .font(.title2.weight(.semibold))
                     .textFieldStyle(.plain)
-                Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        subtitleText
+                        Spacer(minLength: 0)
+                        sectisSwitch
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        subtitleText
+                        sectisSwitch
+                    }
+                }
             }
             .padding(.horizontal)
             .padding(.top, 12)
@@ -67,7 +79,7 @@ struct NoteView: View {
             case .transcript:
                 TranscriptView(noteID: noteID)
             case .enhanced:
-                EnhancedView(noteID: noteID)
+                EnhancedView(noteID: noteID, sectisReady: sectisReady)
             case .ask:
                 AskView(scope: .note(noteID))
             case .translations:
@@ -133,6 +145,10 @@ struct NoteView: View {
         }
         .onAppear {
             if recorder.noteID != noteID, !note.enhanced.isEmpty { tab = .enhanced }
+            refreshSectis()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .sintrIntegrationsChanged)) { _ in
+            refreshSectis()
         }
         .onChange(of: note.enhancedAt) { _, newValue in
             if newValue != nil { tab = .enhanced }
@@ -141,6 +157,32 @@ struct NoteView: View {
             if new > old { tab = .translations }
             if new == 0 && tab == .translations { tab = .enhanced }
         }
+    }
+
+    private var subtitleText: some View {
+        Text(subtitle)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+    }
+
+    /// This note's own switch: whether Enhance sends your action items to Sectis.
+    @ViewBuilder private var sectisSwitch: some View {
+        if sectisReady {
+            Toggle(isOn: Binding(
+                get: { Sectis.isOn(for: store.note(noteID), byDefault: sectisDefault) },
+                set: { value in store.edit(noteID) { $0.sendToSectis = value } })) {
+                Label("Send to Sectis", systemImage: "checklist")
+            }
+            .modifier(OptionToggleStyle())
+            .font(.subheadline)
+            .fixedSize()
+            .help("After Enhance, your action items in this note go to your Sectis Inbox. Turn off to skip this meeting, or to look them over first — then use Review & send on the Enhanced tab.")
+        }
+    }
+
+    private func refreshSectis() {
+        sectisReady = IntegrationSettings.isConfigured(.sectis)
+        sectisDefault = Sectis.isOnByDefault
     }
 
     private var subtitle: String {
@@ -178,6 +220,7 @@ private struct MyNotesEditor: View {
 
 private struct EnhancedView: View {
     let noteID: UUID
+    let sectisReady: Bool
     @Environment(NoteStore.self) private var store
     @Environment(AppState.self) private var appState
     @Environment(Recorder.self) private var recorder
@@ -230,6 +273,10 @@ private struct EnhancedView: View {
                 .padding(.horizontal)
                 .padding(.vertical, 8)
                 Divider()
+                if sectisReady, !editing {
+                    SectisStatusRow(note: note)
+                    Divider()
+                }
                 if editing {
                     TextEditor(text: Binding(
                         get: { store.note(noteID)?.enhanced ?? "" },
@@ -252,6 +299,43 @@ private struct EnhancedView: View {
         var text = note.enhancedBy
         if let date = note.enhancedAt { text += " · " + date.formatted(date: .abbreviated, time: .shortened) }
         return text
+    }
+}
+
+/// On the Enhanced tab: how many action items are yours, whether they've gone to Sectis,
+/// and Review & send.
+private struct SectisStatusRow: View {
+    let note: Note
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let count = Sectis.myItems(in: note).count
+        HStack(spacing: 8) {
+            Image(systemName: "checklist")
+                .foregroundStyle(.secondary)
+            Text(status(count))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Button("Review & send…") {
+                appState.sendRequest = .init(noteID: note.id, kind: .sectis)
+            }
+            .disabled(count == 0)
+            .help("Pick which action items go to Sectis and adjust them first")
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal)
+        .padding(.vertical, 6)
+    }
+
+    private func status(_ count: Int) -> String {
+        guard count > 0 else { return "No action items for you" }
+        let items = "\(count) action item\(count == 1 ? "" : "s") for you"
+        if let sent = Sectis.lastSend(of: note) {
+            return "\(items) · sent to Sectis \(sent.date.formatted(date: .abbreviated, time: .shortened))"
+        }
+        return "\(items) · not sent to Sectis"
     }
 }
 

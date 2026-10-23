@@ -8,6 +8,21 @@ enum Sectis {
     /// The tag Sintr's to-dos get in Sectis (made the first time if you don't have it).
     static let tagName = "Meeting"
 
+    // MARK: The note's switch
+
+    /// What a note's switch starts as: Settings → Integrations → Sectis → Send after Enhance.
+    static var isOnByDefault: Bool { IntegrationSettings.config(.sectis).autoSend }
+
+    /// Whether Enhance sends this note's action items to Sectis.
+    static func isOn(for note: Note?, byDefault: Bool = Sectis.isOnByDefault) -> Bool {
+        note?.sendToSectis ?? byDefault
+    }
+
+    /// The last time this note's items went to Sectis.
+    static func lastSend(of note: Note) -> NoteSend? {
+        note.sentTo.last { $0.destination.hasPrefix(IntegrationKind.sectis.title) }
+    }
+
     // MARK: Which items are yours
 
     /// The names that mean you: Settings → Integrations → Sectis, what you renamed "Me" to in
@@ -61,11 +76,14 @@ enum Sectis {
 
     // MARK: Sending
 
-    /// Adds your action items from the note to your Sectis Inbox. An item already sent from
-    /// this note (even if you've since completed or deleted it in Sectis) isn't added again.
-    static func send(_ note: Note, joinCode: String) async throws -> NoteSend {
-        let items = myItems(in: note)
-        guard !items.isEmpty else { throw IntegrationError.badTarget(noItemsMessage) }
+    /// Adds your action items from the note to your Sectis Inbox — `items` when you've picked
+    /// and adjusted them, otherwise all of them. An item already sent from this note (even if
+    /// you've since completed or deleted it in Sectis) isn't added again.
+    static func send(_ note: Note, items chosen: [ActionItem]? = nil, joinCode: String) async throws -> NoteSend {
+        let items = chosen ?? myItems(in: note)
+        guard !items.isEmpty else {
+            throw IntegrationError.badTarget(chosen == nil ? noItemsMessage : "Tick at least one action item to send.")
+        }
         let connection = try await SectisCloud.connect(joinCode: joinCode)
         let tag = await SectisCloud.findOrCreateTag(tagName, connection)
 
@@ -80,7 +98,7 @@ enum Sectis {
             let written = item.line.replacing(#/^(?:[-*+•]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/#, with: "")
             if SectisFormat.dedupKey(written) != SectisFormat.dedupKey(item.title) { notes.append("“\(written)”") }
             notes += item.details.map { "• \($0)" }
-            let id = SectisFormat.itemID(noteID: note.id.uuidString, title: item.title)
+            let id = SectisFormat.itemID(noteID: note.id.uuidString, title: item.idTitle)
             let record = SectisFormat.todoRecord(
                 id: id, title: item.title, notes: notes.joined(separator: "\n"), deadline: item.deadline,
                 tags: tag.map { [$0] } ?? [], order: base + Double(index) * 0.001, now: now)
@@ -106,6 +124,18 @@ enum Sectis {
         }
         if !problems.isEmpty { summary += ", \(problems.count) not sent" }
         return NoteSend(destination: "Sectis (\(summary))")
+    }
+
+    /// "2026-10-31" ↔ a date, for deadlines.
+    static func date(fromDay day: String) -> Date? {
+        let parts = day.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return Calendar.current.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
+    }
+
+    static func day(from date: Date) -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }
 
     /// Checks the join code, the Firebase project and its rules by reading your tags.

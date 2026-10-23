@@ -16,6 +16,7 @@ struct EnhanceSheet: View {
     @State private var progress: EnhanceProgress?
     @State private var errorText: String?
     @State private var confirmClaude = false
+    @State private var sectisReady = false
 
     private var note: Note { store.note(noteID) ?? Note() }
     private var template: NoteTemplate { templates.template(templateID) }
@@ -34,6 +35,19 @@ struct EnhanceSheet: View {
                     }
                 } footer: {
                     Text("\(wordCount(note.myNotes)) words of your notes · \(wordCount(note.transcriptText)) words of transcript")
+                }
+
+                if sectisReady {
+                    Section {
+                        Toggle(isOn: Binding(
+                            get: { Sectis.isOn(for: store.note(noteID)) },
+                            set: { value in store.edit(noteID) { $0.sendToSectis = value } })) {
+                            Label("Send my action items to Sectis", systemImage: "checklist")
+                        }
+                        .disabled(isRunning)
+                    } footer: {
+                        Text(sectisFooter)
+                    }
                 }
 
                 if let progress {
@@ -149,9 +163,17 @@ struct EnhanceSheet: View {
             }
         }
         .interactiveDismissDisabled(isRunning)
+        .onAppear { sectisReady = IntegrationSettings.isConfigured(.sectis) }
         #if os(macOS)
         .frame(minWidth: 520, minHeight: 600)
         #endif
+    }
+
+    private var sectisFooter: String {
+        if let sent = Sectis.lastSend(of: note) {
+            return "Already sent \(sent.date.formatted(date: .abbreviated, time: .shortened)), so Enhance won't send again — use Review & send on the Enhanced tab for anything new."
+        }
+        return "Turn off to skip this meeting, or to look the items over first and send them yourself from the Enhanced tab."
     }
 
     @ViewBuilder

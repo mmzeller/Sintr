@@ -140,6 +140,19 @@ struct SectisSelfTest {
                 ("Check the Pearl-2 firmware", "2026-10-30"),
             ])
 
+        // Reworded before sending: the Sectis ID still comes from the first wording.
+        let call = mine("- [ ] Send the updated budget to finance — Me, by Friday", solo: false).first
+        if let call {
+            var edited = call
+            edited.originalTitle = call.idTitle
+            edited.title = "Send finance the Q4 budget"
+            check(edited.idTitle == "Send the updated budget to finance", "a reworded item keeps its first wording for its ID")
+            check(SectisFormat.itemID(noteID: "N", title: edited.idTitle) == SectisFormat.itemID(noteID: "N", title: call.idTitle),
+                  "so sending it again doesn't add it twice")
+        } else {
+            check(false, "reads a single action item")
+        }
+
         let grouped = mine("""
             **Matthew**
             - [ ] Renew the SSL certificate by 11/15

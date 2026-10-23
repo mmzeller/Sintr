@@ -184,14 +184,18 @@ Sintr can put the action items that are yours into your [Sectis](https://github.
 
 1. In Sectis, turn on sync (Settings → Sync), then choose **Add Another Device** and **Copy Code**.
 2. In Sintr: **Settings → Integrations → Sectis**, paste the code into **Join code** and press **Save**. **Test connection** checks it.
-3. Turn on **Send automatically after Enhance**. (Or send by hand: **Share → Send to → Sectis** on a note, which also shows you which items it found.)
+3. Turn on **Send after Enhance** if you want new notes to send their action items by themselves.
+
+**Each note has its own Send to Sectis switch**, under its title (and in the Enhance window). It starts the way **Send after Enhance** is set; turn it off in a note to skip that meeting, or to look the items over before they go.
+
+**Review & send** (on the Enhanced tab, or **Share → Send to → Sectis**) lists your action items from that note. Untick any you don't want, fix the wording, add, change or remove a deadline, then **Send**. The Enhanced tab also shows how many items are yours and when they were last sent.
 
 What gets sent:
 
 - **Only unchecked action items that are yours:** the owner is “Me” (Enhance writes that for your tasks), “you”, “everyone”, or one of the names in **Names you go by** (on a Mac, your account's name if you leave it empty). Items under a heading or label with your name count too, like “**Matthew**” or “Matthew's next steps”.
 - An item that doesn't name an owner is sent only when nobody else is in the note — a voice memo, or notes you typed alone.
 - Each one lands in the **Inbox**, tagged **Meeting**, with the meeting's name and date in its notes. A due date in the item (“by Friday”, “Oct 31”, “end of week”) becomes its deadline.
-- Automatic sending happens once per note. Send by hand later to add new items; ones already sent from that note — even if you've completed or deleted them in Sectis — aren't added again.
+- Automatic sending happens once per note. Use Review & send later to add new items; ones already sent from that note — even if you've reworded them, or completed or deleted them in Sectis — aren't added again.
 
 Sintr writes straight to the Firebase project Sectis syncs through, encrypting each to-do with the key in your join code, so it works even when Sectis isn't open; they appear the next time it is. Your names stay on this device: **Share your setup** leaves the Sectis settings out.
 

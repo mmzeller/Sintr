@@ -88,7 +88,11 @@ struct ContentView: View {
             SetupView()
         }
         .sheet(item: $appState.sendRequest) { request in
-            SendSheet(noteID: request.noteID, kind: request.kind)
+            if request.kind == .sectis {
+                SectisSendSheet(noteID: request.noteID)
+            } else {
+                SendSheet(noteID: request.noteID, kind: request.kind)
+            }
         }
         .sheet(isPresented: $appState.showSettings) {
             NavigationStack {
