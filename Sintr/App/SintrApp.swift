@@ -22,6 +22,7 @@ struct SintrApp: App {
         SpeakerDetector.blockNetwork()
         #if os(macOS)
         StorageCheck.runIfRequested()
+        LayoutCheck.runIfRequested()
         // Command-line uses of the same app: these never open a window and exit when done.
         MCPServer.runIfRequested()
         SintrCommandLine.runIfRequested()

@@ -56,7 +56,8 @@ struct RecordBar: View {
                     Text(hint)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             #endif
@@ -222,9 +223,12 @@ private struct NoticeRow: View {
     var body: some View {
         HStack(alignment: .top) {
             Image(systemName: icon).foregroundStyle(tint)
+            // Wraps within the bar, up to a few lines. Not fixedSize(vertical:): macOS works out
+            // the window's smallest size at zero width, where a "grow to fit" text wraps one
+            // character per line and pushed the whole window off screen (a blank note).
             Text(text).font(.callout)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
+                .lineLimit(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
             #if os(macOS)
             if showsSettings {
                 Button("Open Settings") { SystemAudioPermission.openSettings() }

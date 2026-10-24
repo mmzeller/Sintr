@@ -157,6 +157,14 @@ jobs:
           grep -qx "note=true settings=true" <<<"$OUT"
           test -f "$P/Sintr Data/Settings.plist"
 
+      - name: Check the note screen can't grow taller than the window (blank-note bug)
+        shell: bash
+        run: |
+          OUT=$(perl -e 'alarm 120; exec @ARGV' "$RUNNER_TEMP/Sintr Portable/Sintr.app/Contents/MacOS/Sintr" --layout-check 2>&1) && CODE=0 || CODE=$?
+          echo "$OUT" | grep -v "^$" | tail -20 || true
+          echo "::notice title=Layout check::$(echo "$OUT" | grep -E "smallest" | tr '\n' ' ' || true)"
+          exit $CODE
+
       - name: Check the same app without a Sintr Data folder uses normal storage
         if: always()
         shell: bash

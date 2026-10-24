@@ -12,7 +12,9 @@ import CoreAudio
 /// queue it's given (the `CaptureController`'s), never on the main thread: a Bluetooth headset
 /// can take seconds to switch, and the window shouldn't wait for it.
 final class MicCapture: @unchecked Sendable {
-    private let engine = AVAudioEngine()
+    /// Replaced with a fresh one after a device switch (see `restartAfterChange`).
+    private var engine = AVAudioEngine()
+    private var engineObserver: NSObjectProtocol?
     private let queue: DispatchQueue
     /// Device-change notifications are handled on `queue` too.
     private let operations: OperationQueue
@@ -57,6 +59,8 @@ final class MicCapture: @unchecked Sendable {
     func stop() {
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         observers.removeAll()
+        if let engineObserver { NotificationCenter.default.removeObserver(engineObserver) }
+        engineObserver = nil
         handler = nil
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -105,42 +109,69 @@ final class MicCapture: @unchecked Sendable {
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
         guard AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &device, &size) == noErr
         else { return nil }
-        return MicDevices.name(forDevice: device)
+        let name = MicDevices.name(forDevice: device)
+        // macOS often hands the engine its own "CADefaultDeviceAggregate-…" device; the real
+        // microphone is the input chosen in Settings, or the Mac's default input.
+        if let name, name.hasPrefix("CADefaultDeviceAggregate") {
+            return MicDevices.name(forUID: AppSettings.microphoneDeviceUID) ?? MicDevices.defaultInputName() ?? name
+        }
+        return name
         #else
         return AVAudioSession.sharedInstance().currentRoute.inputs.first?.portName
         #endif
     }
 
-    /// After a device change: try again a few times (a Bluetooth headset can take a moment).
+    /// After a device change: start again on a fresh engine. A switch like AirPods connecting
+    /// (48 → 24 kHz) leaves the old engine unable to start ("format not supported", -10868),
+    /// however often it's retried. Tries every second at first, then every five seconds for
+    /// as long as Sintr is listening — a Bluetooth headset can take a while to settle.
     private func restartAfterChange(attempt: Int = 1) {
         guard handler != nil else { return }
         HangWatch.step("Microphone: restarting after a device change (attempt \(attempt))")
         defer { HangWatch.step("") }
+        replaceEngine()
         do {
             try installTapAndStart()
-            ActivityLog.add("Microphone: restarted after a device change")
+            ActivityLog.add("Microphone: restarted after a device change\(attempt > 1 ? " (attempt \(attempt))" : "")")
             onRestarted?(deviceName ?? "Microphone")
+            if attempt > 5 { onInterruption?(true) }
         } catch {
-            ActivityLog.add("Microphone: restart attempt \(attempt) failed (\(error.localizedDescription))")
-            guard attempt < 5 else { onInterruption?(false); return }
-            queue.asyncAfter(deadline: .now() + 1) { [weak self] in
+            if attempt <= 5 || attempt % 12 == 0 {
+                ActivityLog.add("Microphone: restart attempt \(attempt) failed (\(error.localizedDescription))")
+            }
+            if attempt == 5 { onInterruption?(false) }
+            queue.asyncAfter(deadline: .now() + (attempt < 5 ? 1 : 5)) { [weak self] in
                 self?.restartAfterChange(attempt: attempt + 1)
             }
         }
     }
 
-    private func observeChanges() {
-        let center = NotificationCenter.default
-        // Headphones plugged in, Bluetooth connected, a different input chosen: the engine
-        // stops and needs a fresh tap in the new format.
-        observers.append(center.addObserver(
+    /// Swaps in a new AVAudioEngine (and watches it for device changes).
+    private func replaceEngine() {
+        if let engineObserver { NotificationCenter.default.removeObserver(engineObserver) }
+        engineObserver = nil
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        engine = AVAudioEngine()
+        observeEngine()
+    }
+
+    /// Headphones plugged in, Bluetooth connected, a different input chosen: the engine stops
+    /// and needs starting again in the new format.
+    private func observeEngine() {
+        engineObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: operations
         ) { [weak self] _ in
             guard let self, self.handler != nil else { return }
             ActivityLog.add("Microphone: audio devices changed")
             self.restartAfterChange()
-        })
+        }
+    }
+
+    private func observeChanges() {
+        observeEngine()
         #if os(iOS)
+        let center = NotificationCenter.default
         observers.append(center.addObserver(
             forName: AVAudioSession.interruptionNotification, object: nil, queue: operations
         ) { [weak self] note in
@@ -199,6 +230,19 @@ enum MicDevices {
 
     static func name(forDevice id: AudioDeviceID) -> String? {
         read(id, kAudioObjectPropertyName).map { $0 as String }
+    }
+
+    /// The Mac's default input right now (System Settings → Sound → Input).
+    static func defaultInputName() -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var device = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) == noErr,
+              device != 0 else { return nil }
+        return name(forDevice: device)
     }
 
     private static func deviceIDs() -> [AudioDeviceID] {
