@@ -40,8 +40,9 @@ for SIZE in large extra-extra-extra-large accessibility-medium accessibility-ext
 done
 
 # Sample notes (see ScreenshotDemo.swift): enhanced, new, Review & send for Sectis, a short
-# enhanced note showing the Sectis card, and an empty Enhanced tab.
-for MODE in enhanced new review card empty; do
+# enhanced note showing the Sectis card, an empty Enhanced tab, and the Transcript tab with
+# detected speakers and the "Transcript rebuilt" message.
+for MODE in enhanced new review card empty transcript; do
   for SIZE in large extra-extra-extra-large accessibility-medium; do
     xcrun simctl ui "$UDID" content_size "$SIZE"
     xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null
@@ -50,7 +51,37 @@ for MODE in enhanced new review card empty; do
     xcrun simctl io "$UDID" screenshot "shots/note-$MODE-$SIZE.png" >/dev/null
   done
 done
+
+# The same note screen 320 points wide — an iPhone 12 with Display Zoom set to Larger Text,
+# where the screen is narrower than any simulator's. Anything wider than that screen shows past
+# the red lines at its edges.
+for MODE in transcript enhanced new; do
+  for SIZE in large extra-extra-extra-large accessibility-medium; do
+    xcrun simctl ui "$UDID" content_size "$SIZE"
+    xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null
+    xcrun simctl launch "$UDID" "$BUNDLE" --demo-note "$MODE" --demo-width 320 >/dev/null
+    sleep 12
+    xcrun simctl io "$UDID" screenshot "shots/zoomed-$MODE-$SIZE.png" >/dev/null
+  done
+done
 ls -la shots
+
+# The iPhone layout check (PhoneLayoutCheck.swift): measures every tab of the note screen and
+# the record bar at 320, 375 and 390 points and several text sizes; nothing may be wider than
+# the screen.
+xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null
+xcrun simctl ui "$UDID" content_size large
+LAYOUT=$(perl -e 'alarm 180; exec @ARGV' xcrun simctl launch --console "$UDID" "$BUNDLE" --layout-check 2>&1)
+echo "$LAYOUT" | grep -E "points|TOO WIDE|Control|RESULT|layout check" || echo "$LAYOUT" | tail -40
+LAYOUT_STATUS=0
+echo "$LAYOUT" | grep -q "RESULT: everything fits" || LAYOUT_STATUS=1
+SUMMARY=$(echo "$LAYOUT" | grep -E "TOO WIDE|Control|RESULT" | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
+if [ $LAYOUT_STATUS -eq 0 ]; then
+  echo "::notice title=iPhone layout check::${SUMMARY}"
+else
+  echo "::error title=iPhone layout check::${SUMMARY:-The check didn't finish (no RESULT line)}"
+fi
+echo "$LAYOUT" > shots/layout-check.txt
 
 # Publish to the "screenshots" branch.
 cd shots
@@ -59,3 +90,4 @@ git init -q && git checkout -q -b screenshots && git add . \
   && git -c user.name="Sintr CI" -c user.email="ci@users.noreply.github.com" commit -qm "Screenshots for $GITHUB_SHA" \
   && git push -qf "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" screenshots
 echo "::notice title=Screenshots::Saved to the screenshots branch ($NAME)"
+exit $LAYOUT_STATUS

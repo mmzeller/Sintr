@@ -20,6 +20,9 @@ struct NoteView: View {
     @State private var sectisDefault = false
     /// Editing the enhanced notes' Markdown (Edit/Done in the toolbar).
     @State private var editingEnhanced = false
+    #if os(iOS)
+    @FocusState private var titleFocused: Bool
+    #endif
 
     enum Tab: String, CaseIterable, Identifiable {
         case myNotes = "My notes"
@@ -28,6 +31,25 @@ struct NoteView: View {
         case ask = "Ask"
         case translations = "Translations"
         var id: String { rawValue }
+
+        var systemImage: String {
+            switch self {
+            case .myNotes: "square.and.pencil"
+            case .transcript: "text.quote"
+            case .enhanced: "sparkles"
+            case .ask: "bubble.left.and.text.bubble.right"
+            case .translations: "translate"
+            }
+        }
+    }
+
+    /// The tab to open on instead of the usual one (the iPhone layout check measures each).
+    private let initialTab: Tab?
+
+    init(noteID: UUID, initialTab: Tab? = nil) {
+        self.noteID = noteID
+        self.initialTab = initialTab
+        _tab = State(initialValue: initialTab ?? .myNotes)
     }
 
     private var tabs: [Tab] {
@@ -42,12 +64,39 @@ struct NoteView: View {
             set: { value in store.edit(noteID) { $0[keyPath: keyPath] = value } })
     }
 
+    #if os(iOS)
+    /// The title on one line of text even though the field wraps: Return (a new line) ends editing.
+    private var titleBinding: Binding<String> {
+        Binding(
+            get: { store.note(noteID)?.title ?? "" },
+            set: { value in
+                if value.contains(where: \.isNewline) {
+                    let flat = value.split(whereSeparator: \.isNewline).joined(separator: " ")
+                    store.edit(noteID) { $0.title = flat }
+                    titleFocused = false
+                } else {
+                    store.edit(noteID) { $0.title = value }
+                }
+            })
+    }
+    #endif
+
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
+                #if os(macOS)
                 TextField("Title", text: binding(\.title), prompt: Text("Untitled note"))
                     .font(.title2.weight(.semibold))
                     .textFieldStyle(.plain)
+                #else
+                // Long titles wrap instead of scrolling sideways; Return finishes editing.
+                TextField("Title", text: titleBinding, prompt: Text("Untitled note"), axis: .vertical)
+                    .font(.title2.weight(.semibold))
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...3)
+                    .submitLabel(.done)
+                    .focused($titleFocused)
+                #endif
                 #if os(macOS)
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) {
@@ -68,6 +117,7 @@ struct NoteView: View {
             .padding(.horizontal)
             .padding(.top, Platform.isMac ? 12 : 4)
 
+            #if os(macOS)
             Picker("Show", selection: $tab) {
                 ForEach(tabs) { tab in
                     Text(tab.rawValue).tag(tab)
@@ -76,7 +126,13 @@ struct NoteView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .padding(.horizontal)
-            .padding(.vertical, Platform.isMac ? 10 : 8)
+            .padding(.vertical, 10)
+            #else
+            NoteTabBar(tabs: tabs, selection: $tab)
+                .padding(.horizontal)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+            #endif
 
             Divider()
 
@@ -168,7 +224,11 @@ struct NoteView: View {
             Text("Your notes and transcript stay. Without the audio you can't re-transcribe it later.")
         }
         .onAppear {
-            if recorder.noteID != noteID, !note.enhanced.isEmpty || ScreenshotDemo.opensOnEnhanced { tab = .enhanced }
+            if let demoTab = ScreenshotDemo.openingTab {
+                tab = demoTab
+            } else if initialTab == nil, recorder.noteID != noteID, !note.enhanced.isEmpty {
+                tab = .enhanced
+            }
             refreshSectis()
         }
         .onReceive(NotificationCenter.default.publisher(for: .sintrIntegrationsChanged)) { _ in
@@ -225,6 +285,79 @@ struct NoteView: View {
         return parts.joined(separator: " · ")
     }
 }
+
+#if os(iOS)
+// MARK: - Tabs (iPhone)
+
+/// iPhone: the note's tabs. A segmented picker needs about 390 points for four tabs and never
+/// gets narrower, so with Display Zoom (a 320-point screen) it pushed the whole note screen
+/// wider than the phone. This bar always fits: every tab's name when there's room, then the open
+/// tab's name with icons for the others, then icons only.
+struct NoteTabBar: View {
+    let tabs: [NoteView.Tab]
+    @Binding var selection: NoteView.Tab
+
+    private enum Style { case name, icon, both }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            bar { _ in .name }
+            bar { $0 == selection ? .both : .icon }
+            bar { _ in .icon }
+        }
+        // Grows with larger text, up to a point: past that the names give way to icons sooner.
+        .dynamicTypeSize(...DynamicTypeSize.xLarge)
+        .sensoryFeedback(.selection, trigger: selection)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Show")
+    }
+
+    private func bar(_ style: @escaping (NoteView.Tab) -> Style) -> some View {
+        HStack(spacing: 2) {
+            ForEach(tabs) { tab in
+                segment(tab, style: style(tab))
+            }
+        }
+        .padding(3)
+        .background(Self.track, in: Capsule())
+    }
+
+    private func segment(_ tab: NoteView.Tab, style: Style) -> some View {
+        let selected = tab == selection
+        return Button {
+            withAnimation(.snappy(duration: 0.22)) { selection = tab }
+        } label: {
+            HStack(spacing: 5) {
+                if style != .name { Image(systemName: tab.systemImage) }
+                if style != .icon { Text(tab.rawValue) }
+            }
+            .font(.subheadline.weight(selected ? .semibold : .medium))
+            .lineLimit(1)
+            .fixedSize()
+            .foregroundStyle(selected ? Color.primary : Color.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, minHeight: 34)
+            .background {
+                if selected {
+                    Capsule()
+                        .fill(Self.thumb)
+                        .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(tab.rawValue)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private static let track = Color(uiColor: .tertiarySystemFill)
+    private static let thumb = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(white: 0.36, alpha: 1) : .white
+    })
+}
+#endif
 
 // MARK: - My notes
 
@@ -402,6 +535,9 @@ private struct TranslationsView: View {
         let translations = note.translations.sorted { $0.created > $1.created }
         let current = translations.first { $0.id == selected } ?? translations.first
         VStack(spacing: 0) {
+            #if os(iOS)
+            phoneHeader(translations: translations, current: current)
+            #else
             HStack {
                 if translations.count > 1 {
                     Picker("Translation", selection: Binding(
@@ -431,6 +567,7 @@ private struct TranslationsView: View {
             .buttonStyle(.borderless)
             .padding(.horizontal)
             .padding(.vertical, 8)
+            #endif
             Divider()
             ScrollView {
                 if let current {
@@ -441,6 +578,62 @@ private struct TranslationsView: View {
             }
         }
     }
+
+    #if os(iOS)
+    /// iPhone: which translation (a menu when there are several) and who wrote it, stacked so a
+    /// long language and part name never pushes the Copy and Delete buttons off the screen.
+    private func phoneHeader(translations: [NoteTranslation], current: NoteTranslation?) -> some View {
+        HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
+                if let current {
+                    if translations.count > 1 {
+                        Menu {
+                            Picker("Translation", selection: Binding(
+                                get: { current.id }, set: { selected = $0 })) {
+                                ForEach(translations) { item in
+                                    Text("\(item.languageName) — \(item.partName)").tag(item.id)
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("\(current.languageName) — \(current.partName)")
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.caption2.weight(.semibold))
+                            }
+                            .font(.callout.weight(.semibold))
+                        }
+                    } else {
+                        Text("\(current.languageName) — \(current.partName)")
+                            .font(.callout.weight(.semibold))
+                            .lineLimit(2)
+                    }
+                    Text("by \(current.by)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if let current {
+                Button("Copy", systemImage: "doc.on.doc") { Clipboard.copy(current.text) }
+                    .labelStyle(.iconOnly)
+                    .frame(width: 44, height: 44)
+                Button("Delete", systemImage: "trash", role: .destructive) {
+                    store.edit(noteID) { $0.translations.removeAll { $0.id == current.id } }
+                    selected = nil
+                }
+                .labelStyle(.iconOnly)
+                .frame(width: 44, height: 44)
+            }
+        }
+        .buttonStyle(.borderless)
+        .padding(.leading)
+        .padding(.trailing, 8)
+        .padding(.vertical, 4)
+    }
+    #endif
 }
 
 /// Shows the Markdown the models write: headings, bullets, checkboxes and inline bold/italics.

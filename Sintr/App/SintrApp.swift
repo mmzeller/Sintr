@@ -77,6 +77,8 @@ struct SintrApp: App {
         #else
         WindowGroup {
             root
+                .modifier(DemoWidthFrame())
+                .task { if PhoneLayoutCheck.isRequested { PhoneLayoutCheck.run() } }
         }
         #endif
     }

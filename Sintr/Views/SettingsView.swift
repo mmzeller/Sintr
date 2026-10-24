@@ -261,7 +261,7 @@ struct SettingsView: View {
         } header: {
             Text("Speakers")
         } footer: {
-            Text("On calls, your microphone is “Me” and the call is “Them” (or Them 1, Them 2… when several people talk). In person, voices are labeled Speaker 1, Speaker 2… Click a speaker's name in a transcript to rename them. Runs on this \(Platform.deviceName) with open models (a one-time download of a few dozen MB) from Hugging Face; your audio is never uploaded.")
+            Text("On calls, your microphone is “Me” and the call is “Them” (or Them 1, Them 2… when several people talk). In person, voices are labeled Speaker 1, Speaker 2… \(Platform.isMac ? "Click" : "Tap") a speaker's name in a transcript to rename them. Runs on this \(Platform.deviceName) with open models (a one-time download of a few dozen MB) from Hugging Face; your audio is never uploaded.")
         }
     }
 

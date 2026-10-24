@@ -145,7 +145,7 @@ final class Importer {
             noteID: noteID, onlyFrom: nil, detectSpeakers: detect,
             title: detect ? "Identifying speakers" : "Rebuilding the transcript",
             doneMessage: detect
-                ? "Transcript rebuilt with speaker labels. Click a speaker's name to rename them."
+                ? "Transcript rebuilt with speaker labels. \(Platform.isMac ? "Click" : "Tap") a speaker's name to rename them."
                 : "Transcript rebuilt from the recording."), store: store)
     }
 

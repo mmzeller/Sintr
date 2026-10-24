@@ -48,7 +48,11 @@ struct RecordBar: View {
             // the hint only shows on a note that hasn't been recorded yet.
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 12) {
-                    compactRecordButton
+                    // "Record more" when it fits; just "Record" on a narrow screen with large text.
+                    ViewThatFits(in: .horizontal) {
+                        compactRecordButton(hasRecording ? "Record more" : "Record")
+                        compactRecordButton("Record")
+                    }
                     Spacer(minLength: 0)
                     RecordingOptionsMenu()
                 }
@@ -90,11 +94,11 @@ struct RecordBar: View {
     private var hasRecording: Bool { (store.note(noteID)?.duration ?? 0) > 0 }
 
     /// iPhone: a capsule Record button that stays on one line at every text size.
-    private var compactRecordButton: some View {
+    private func compactRecordButton(_ title: String) -> some View {
         Button {
             Task { await recorder.start(noteID: noteID, store: store) }
         } label: {
-            Label(hasRecording ? "Record more" : "Record", systemImage: "record.circle")
+            Label(title, systemImage: "record.circle")
                 .font(.headline)
                 .lineLimit(1)
         }
@@ -103,6 +107,7 @@ struct RecordBar: View {
         .controlSize(.large)
         .tint(.red)
         .fixedSize()
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         .disabled(post.isBusy(with: noteID))
     }
 
@@ -151,6 +156,8 @@ struct RecordBar: View {
                     TimelineView(.periodic(from: started, by: 1)) { context in
                         Text(Note.clock(context.date.timeIntervalSince(started)))
                             .font(.title3.monospacedDigit().weight(.medium))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
                     }
                 }
                 Spacer()
@@ -234,10 +241,20 @@ private struct NoticeRow: View {
                 Button("Open Settings") { SystemAudioPermission.openSettings() }
                     .font(.callout)
             }
-            #endif
             Button("Dismiss", action: dismiss)
                 .buttonStyle(.borderless)
                 .font(.callout)
+            #else
+            // iPhone: a close button rather than the word, so the message gets the width.
+            Button("Dismiss", systemImage: "xmark.circle.fill", action: dismiss)
+                .labelStyle(.iconOnly)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .symbolRenderingMode(.hierarchical)
+                .buttonStyle(.borderless)
+                .frame(minWidth: 32, minHeight: 32, alignment: .top)
+                .contentShape(Rectangle())
+            #endif
         }
     }
 }
@@ -493,7 +510,8 @@ struct RecordingOptionsMenu: View {
         } label: {
             Image(systemName: "slider.horizontal.3")
                 .font(.title3)
-                .frame(width: 44, height: 44)
+                .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+                .frame(minWidth: 44, minHeight: 44)
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("Recording options")

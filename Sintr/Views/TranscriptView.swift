@@ -19,15 +19,35 @@ struct TranscriptView: View {
     var body: some View {
         let note = self.note
         let speakers = note.speakers
+        // Colors go by the name shown, so two labels renamed to the same person match.
+        let names = speakers.map { note.displayName(forSpeaker: $0) }.reduce(into: [String]()) { list, name in
+            if !list.contains(name) { list.append(name) }
+        }
+        let color: (String) -> Color = { speaker in
+            speaker == "Me" ? .accentColor : SpeakerColors.color(for: note.displayName(forSpeaker: speaker), in: names)
+        }
         VStack(spacing: 0) {
             if !note.transcript.isEmpty || !note.recordings.isEmpty {
                 toolbar(note: note, speakers: speakers)
                 Divider()
             }
+            if let downloading {
+                HStack(spacing: 10) {
+                    ProgressView(value: downloading)
+                    Text("Downloading speaker detection…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                Divider()
+            }
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
+                    LazyVStack(alignment: .leading, spacing: Platform.isMac ? 14 : 18) {
                         if note.transcript.isEmpty && !isRecordingHere {
                             ContentUnavailableView(
                                 "No transcript yet",
@@ -39,7 +59,7 @@ struct TranscriptView: View {
                             SegmentRow(
                                 time: Note.clock(segment.start),
                                 speaker: segment.speaker.isEmpty ? nil : note.displayName(forSpeaker: segment.speaker),
-                                color: SpeakerColors.color(for: segment.speaker, in: speakers),
+                                color: color(segment.speaker),
                                 text: segment.text,
                                 isLive: false,
                                 rename: segment.speaker.isEmpty ? nil : { startRenaming(segment.speaker) })
@@ -48,7 +68,7 @@ struct TranscriptView: View {
                             ForEach(recorder.speakers, id: \.self) { speaker in
                                 if let text = recorder.volatileText[speaker], !text.isEmpty {
                                     SegmentRow(time: "now", speaker: speaker.isEmpty ? nil : speaker,
-                                               color: SpeakerColors.color(for: speaker, in: speakers),
+                                               color: color(speaker),
                                                text: text, isLive: true, rename: nil)
                                 }
                             }
@@ -81,17 +101,25 @@ struct TranscriptView: View {
         }
     }
 
+    /// Copy, Rename speakers and From audio. Their names when they fit on one line, icons when
+    /// they don't (a narrow iPhone, large text) — never squeezed, wrapped, or past the screen edge.
     private func toolbar(note: Note, speakers: [String]) -> some View {
-        HStack(spacing: 14) {
+        ViewThatFits(in: .horizontal) {
+            toolbarRow(note: note, speakers: speakers, iconsOnly: false)
+            toolbarRow(note: note, speakers: speakers, iconsOnly: true)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, Platform.isMac ? 8 : 2)
+    }
+
+    private func toolbarRow(note: Note, speakers: [String], iconsOnly: Bool) -> some View {
+        HStack(spacing: iconsOnly ? 4 : 14) {
             Button("Copy transcript", systemImage: "doc.on.doc") {
                 Clipboard.copy(note.transcriptLines())
             }
+            .modifier(TranscriptToolLabel(iconsOnly: iconsOnly))
             .disabled(note.transcript.isEmpty)
-            if let downloading {
-                ProgressView(value: downloading).frame(width: 120)
-                Text("Downloading speaker detection…").foregroundStyle(.secondary)
-            }
-            Spacer()
+            Spacer(minLength: iconsOnly ? 8 : 16)
             if !speakers.isEmpty {
                 Menu {
                     ForEach(speakers, id: \.self) { speaker in
@@ -100,7 +128,7 @@ struct TranscriptView: View {
                 } label: {
                     Label("Rename speakers", systemImage: "person.text.rectangle")
                 }
-                .fixedSize()
+                .modifier(TranscriptToolLabel(iconsOnly: iconsOnly))
             }
             if !note.recordings.isEmpty {
                 Menu {
@@ -118,15 +146,13 @@ struct TranscriptView: View {
                 } label: {
                     Label("From audio", systemImage: "waveform")
                 }
-                .fixedSize()
+                .modifier(TranscriptToolLabel(iconsOnly: iconsOnly))
                 .disabled(busy)
                 .help("Rebuild the transcript from the saved recording, with or without speaker labels.")
             }
         }
         .buttonStyle(.borderless)
         .font(.callout)
-        .padding(.horizontal)
-        .padding(.vertical, 8)
     }
 
     private func startRenaming(_ speaker: String) {
@@ -169,28 +195,73 @@ struct SegmentRow: View {
     let rename: (() -> Void)?
 
     var body: some View {
+        #if os(macOS)
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(time)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 52, alignment: .trailing)
             VStack(alignment: .leading, spacing: 2) {
-                if let speaker {
-                    if let rename {
-                        Button(action: rename) {
-                            Text(speaker).font(.caption.weight(.bold)).foregroundStyle(color)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Rename this speaker")
-                    } else {
-                        Text(speaker).font(.caption.weight(.bold)).foregroundStyle(color)
-                    }
-                }
-                Text(text)
-                    .italic(isLive)
-                    .foregroundStyle(isLive ? .secondary : .primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let speaker { speakerLabel(speaker) }
+                words
             }
+        }
+        #else
+        // iPhone: the time sits beside the speaker's name, so the words get the full width
+        // instead of a column of times down the left.
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                if let speaker { speakerLabel(speaker) }
+                Text(time)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            words
+        }
+        #endif
+    }
+
+    @ViewBuilder private func speakerLabel(_ speaker: String) -> some View {
+        if let rename {
+            Button(action: rename) {
+                Text(speaker).font(.caption.weight(.bold)).foregroundStyle(color)
+            }
+            .buttonStyle(.plain)
+            .help("Rename this speaker")
+            .accessibilityHint("Renames this speaker")
+        } else {
+            Text(speaker).font(.caption.weight(.bold)).foregroundStyle(color)
+        }
+    }
+
+    private var words: some View {
+        Text(text)
+            .italic(isLive)
+            .foregroundStyle(isLive ? .secondary : .primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A transcript toolbar button: its name and icon, or (when there isn't room) just the icon
+/// with a full-size tap area. The name stays on one line either way.
+private struct TranscriptToolLabel: ViewModifier {
+    let iconsOnly: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if iconsOnly {
+            content
+                .labelStyle(.iconOnly)
+                .font(.body)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        } else {
+            content
+                .labelStyle(.titleAndIcon)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(minHeight: Platform.isMac ? 0 : 44)
         }
     }
 }

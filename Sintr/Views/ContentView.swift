@@ -5,6 +5,7 @@ struct ContentView: View {
     @Environment(Recorder.self) private var recorder
     @Environment(Importer.self) private var importer
     @Environment(AppState.self) private var appState
+    @Environment(PostProcessor.self) private var post
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
     @State private var showStorageWarning = Storage.current.warning != nil
     /// The shared-folder action the file picker is open for (kept after the picker closes).
@@ -57,7 +58,7 @@ struct ContentView: View {
                 }
             }
         }
-        .task { ScreenshotDemo.open(store: store, appState: appState) }
+        .task { ScreenshotDemo.open(store: store, appState: appState, post: post) }
         .onChange(of: appState.folderPick) { _, pick in
             if let pick { activePick = pick }
         }

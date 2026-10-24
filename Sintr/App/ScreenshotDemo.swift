@@ -1,8 +1,11 @@
 import Foundation
+import SwiftUI
 
 /// For the automated screenshots (scripts/ci-screenshots.sh): launching with
-/// `--demo-note enhanced|new|review|card|empty` opens a sample note, so the note screen can be checked
-/// at different text sizes without a phone. Does nothing without that launch argument.
+/// `--demo-note enhanced|new|review|card|empty|transcript` opens a sample note, so the note screen
+/// can be checked at different text sizes without a phone. `--demo-width 320` also lays the app
+/// out 320 points wide — an iPhone with Display Zoom set to Larger Text — with red lines at the
+/// edges, so anything wider than that screen shows past them. Does nothing without these.
 enum ScreenshotDemo {
     static let mode: String? = {
         let arguments = CommandLine.arguments
@@ -10,10 +13,24 @@ enum ScreenshotDemo {
         return index + 1 < arguments.count ? arguments[index + 1] : "enhanced"
     }()
 
+    static let width: CGFloat? = {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: "--demo-width"), index + 1 < arguments.count,
+              let value = Double(arguments[index + 1]) else { return nil }
+        return CGFloat(value)
+    }()
+
     static var isActive: Bool { mode != nil }
 
-    /// "empty": a new note opened on the Enhanced tab.
-    static var opensOnEnhanced: Bool { mode == "empty" }
+    /// The tab the sample note opens on, when it isn't the usual one: "empty" is a new note on
+    /// the Enhanced tab; "transcript" is the enhanced note on its Transcript tab.
+    static var openingTab: NoteView.Tab? {
+        switch mode ?? "" {
+        case "empty": return .enhanced
+        case "transcript": return .transcript
+        default: return nil
+        }
+    }
 
     /// Before the first screen: skip the recording setup sheet.
     static func prepare() {
@@ -21,21 +38,57 @@ enum ScreenshotDemo {
         UserDefaults.standard.set(true, forKey: AppSettings.setupDone)
     }
 
-    /// Adds the sample note and opens it (and, for "review", the Send to Sectis sheet).
+    /// Adds the sample note and opens it (and, for "review", the Send to Sectis sheet; for
+    /// "transcript", the message speaker detection leaves when it's done).
     @MainActor
-    static func open(store: NoteStore, appState: AppState) {
+    static func open(store: NoteStore, appState: AppState, post: PostProcessor) {
         guard let mode else { return }
         let note: Note
         switch mode {
         case "new", "empty": note = newNote
         case "card": note = shortNote
+        case "transcript": note = transcriptNote
         default: note = enhancedNote
         }
+        addRecordingFiles(of: note, to: store)
         _ = store.merge([note])
         appState.selection = note.id
         if mode == "review" {
             appState.sendRequest = .init(noteID: note.id, kind: .sectis)
         }
+        if mode == "transcript" {
+            post.notice = "Transcript rebuilt with speaker labels. \(Platform.isMac ? "Click" : "Tap") a speaker's name to rename them."
+        }
+    }
+
+    /// A note only keeps recordings whose files exist, so the sample's gets an empty stand-in.
+    @MainActor
+    static func addRecordingFiles(of note: Note, to store: NoteStore) {
+        for recording in note.recordings {
+            let url = store.recordingURL(recording.fileName)
+            if !FileManager.default.fileExists(atPath: url.path) {
+                FileManager.default.createFile(atPath: url.path, contents: Data())
+            }
+        }
+    }
+
+    /// The enhanced note with a longer transcript, two detected speakers and its audio saved
+    /// (so Rename speakers and From audio show).
+    static var transcriptNote: Note {
+        var note = enhancedNote
+        note.id = UUID(uuidString: "5A5A5A5A-0000-4000-8000-000000000004")!
+        note.title = "Stream test debrief with the clerk's office"
+        note.transcript = [
+            TranscriptSegment(speaker: "Speaker 1", start: 2, text: "Okay, recording. Let's go over Tuesday's stream test first."),
+            TranscriptSegment(speaker: "Speaker 2", start: 9, text: "It dropped twice, and both times it was right when the Pearl switched layouts."),
+            TranscriptSegment(speaker: "Speaker 1", start: 18, text: "So not the network. I'll update the firmware before the next council meeting and we'll run it again."),
+            TranscriptSegment(speaker: "Speaker 2", start: 31, text: "Sounds good. Can you also send Vimeo the attendance numbers?"),
+            TranscriptSegment(speaker: "Speaker 1", start: 38, text: "Yes, by Friday."),
+        ]
+        note.speakerNames = ["Speaker 1": "Me"]
+        note.duration = 48
+        note.recordings = [NoteRecording(fileName: "demo.m4a", speaker: "", offset: 0)]
+        return note
     }
 
     private static var newNote: Note {
@@ -96,5 +149,27 @@ enum ScreenshotDemo {
         note.enhancedBy = "Gemma 3 1B on this \(Platform.deviceName)"
         note.enhancedAt = Date().addingTimeInterval(-2 * 3600)
         return note
+    }
+}
+
+/// `--demo-width`: the whole app laid out at that width, centered, with red lines at its edges.
+struct DemoWidthFrame: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let width = ScreenshotDemo.width {
+            content
+                .frame(width: width)
+                .overlay {
+                    HStack(spacing: width) {
+                        Rectangle().fill(.red).frame(width: 1)
+                        Rectangle().fill(.red).frame(width: 1)
+                    }
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                }
+                .frame(maxWidth: .infinity)
+        } else {
+            content
+        }
     }
 }
