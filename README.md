@@ -116,6 +116,8 @@ bash ~/Sintr/update.sh
 ```
 Then run `bash ~/Sintr/install-mac.sh` (and `make-portable.sh` for the portable copy, or ▶ in Xcode for the iPhone). Your notes are kept.
 
+**After upgrading to a new macOS (27):** install the matching Xcode (27) from the App Store, open it once so it finishes setting up, then run the update and install as above. Sintr is built and run on macOS 27 with Xcode 27 by the automated checks, so it's ready for it. The copy you already have keeps working after the upgrade; building a new one is what needs the new Xcode.
+
 ## Recording calls on the Mac
 
 The first time Sintr opens, **Let Sintr transcribe your meetings** lists everything recording needs — your microphone, the other side of calls, Apple's speech model, and telling voices apart — with an Allow or Download button for each. Open it again any time from ⋯ → **Set up recording…** (or Recording → Set Up Recording… on the Mac).
