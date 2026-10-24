@@ -16,7 +16,8 @@ final class AudioTap: @unchecked Sendable {
 
     func process(_ raw: AVAudioPCMBuffer) {
         guard let mono = AudioPipe.mono(raw) else { return }
-        let level = AudioPipe.level(mono)
+        let measured = AudioPipe.level(mono)
+        let level = measured.isFinite ? measured : 0
         let sound = AudioPipe.hasSound(mono)
         let now = ProcessInfo.processInfo.systemUptime
         let sink = lock.withLock { () -> (@Sendable (AVAudioPCMBuffer) -> Void)? in
@@ -106,6 +107,9 @@ final class AudioHub {
         }
         controller.onNotice = { [weak self] text in
             Task { @MainActor in self?.onNotice?(text) }
+        }
+        controller.onMicName = { [weak self] name in
+            Task { @MainActor in self?.micName = name }
         }
     }
 

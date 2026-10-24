@@ -16,6 +16,8 @@ final class CaptureController: @unchecked Sendable {
     let queue = DispatchQueue(label: "Sintr.AudioControl", qos: .userInitiated)
     /// Things the person should know (an interruption, a device that went away). Any thread.
     var onNotice: (@Sendable (String) -> Void)?
+    /// The microphone switched devices by itself (AirPods connected). Any thread.
+    var onMicName: (@Sendable (String) -> Void)?
 
     // Only touched on `queue`.
     private var mic: MicCapture?
@@ -89,6 +91,10 @@ final class CaptureController: @unchecked Sendable {
         stopMic(tap: tap)
         HangWatch.step("Microphone: starting")
         let capture = MicCapture(queue: queue)
+        capture.onRestarted = { [weak self] name in
+            self?.micName = name
+            self?.onMicName?(name)
+        }
         capture.onInterruption = { [weak self] resumed in
             self?.onNotice?(resumed
                 ? "Recording resumed after an interruption."
@@ -124,7 +130,7 @@ final class CaptureController: @unchecked Sendable {
         callSource = source
         callTarget = target
         HangWatch.step("Call audio: starting")
-        let capture = SystemAudioCapture(source: source, target: target)
+        let capture = SystemAudioCapture(source: source, target: target, queue: queue)
         do {
             try capture.start { buffer in tap.process(buffer) }
             call = capture

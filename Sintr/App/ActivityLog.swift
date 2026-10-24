@@ -10,6 +10,12 @@ enum ActivityLog {
     nonisolated(unsafe) private static var lines: [String] = []
     nonisolated(unsafe) private static var handle: FileHandle?
     nonisolated(unsafe) private static var opened = false
+    /// A refresh of the Activity Log window is already on its way to the main thread.
+    nonisolated(unsafe) private static var refreshPending = false
+    /// The same line arriving over and over (from an audio callback, say) is written a few
+    /// times, then counted, so it can't flood the log or the main thread.
+    nonisolated(unsafe) private static var lastMessage = ""
+    nonisolated(unsafe) private static var repeats = 0
 
     static var fileURL: URL {
         Storage.root.appendingPathComponent("Logs/activity.log")
@@ -34,8 +40,32 @@ enum ActivityLog {
 
     static func add(_ message: String) {
         let stamp = Self.formatter.string(from: Date())
-        let line = "\(stamp)  \(message)"
         lock.lock()
+        if message == lastMessage {
+            repeats += 1
+            if repeats > 3 {
+                lock.unlock()
+                return
+            }
+        } else {
+            if repeats > 3 { append("\(stamp)  (the line before was repeated \(repeats - 3) more times)") }
+            lastMessage = message
+            repeats = 0
+        }
+        append("\(stamp)  \(message)")
+        let refresh = !refreshPending
+        refreshPending = true
+        lock.unlock()
+        if refresh {
+            Task { @MainActor in
+                lock.withLock { refreshPending = false }
+                ActivityLogFeed.shared.changed()
+            }
+        }
+    }
+
+    /// Call with the lock held.
+    private static func append(_ line: String) {
         lines.append(line)
         if lines.count > 600 { lines.removeFirst(lines.count - 600) }
         if !opened {
@@ -49,8 +79,6 @@ enum ActivityLog {
         if let data = (line + "\n").data(using: .utf8) {
             try? handle?.write(contentsOf: data)
         }
-        lock.unlock()
-        Task { @MainActor in ActivityLogFeed.shared.changed() }
     }
 
     static var current: [String] {

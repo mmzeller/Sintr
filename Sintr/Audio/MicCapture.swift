@@ -21,6 +21,9 @@ final class MicCapture: @unchecked Sendable {
     /// Called on the capture queue when recording was interrupted (a phone call, Siri, a
     /// device that went away) and whether it could resume.
     var onInterruption: ((_ resumed: Bool) -> Void)?
+    /// Called on the capture queue with the microphone's name after it restarted on a new
+    /// device (AirPods connected, say).
+    var onRestarted: ((_ deviceName: String) -> Void)?
 
     init(queue: DispatchQueue) {
         self.queue = queue
@@ -116,6 +119,7 @@ final class MicCapture: @unchecked Sendable {
         do {
             try installTapAndStart()
             ActivityLog.add("Microphone: restarted after a device change")
+            onRestarted?(deviceName ?? "Microphone")
         } catch {
             ActivityLog.add("Microphone: restart attempt \(attempt) failed (\(error.localizedDescription))")
             guard attempt < 5 else { onInterruption?(false); return }

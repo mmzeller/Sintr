@@ -11,6 +11,11 @@ enum HangWatch {
     /// When the job now waiting for the main thread was sent (nil: none waiting).
     nonisolated(unsafe) private static var pendingSince: TimeInterval?
     nonisolated(unsafe) private static var reported = false
+    /// Seconds in a row the main thread was slow to answer (busy, not frozen), and whether
+    /// that's been noted.
+    nonisolated(unsafe) private static var slowBeats = 0
+    nonisolated(unsafe) private static var slowWorst: Double = 0
+    nonisolated(unsafe) private static var reportedSlow = false
     nonisolated(unsafe) private static var currentStep = ""
     nonisolated(unsafe) private static var timer: DispatchSourceTimer?
 
@@ -55,10 +60,37 @@ enum HangWatch {
     /// Runs on the main thread.
     private static func answered() {
         let now = ProcessInfo.processInfo.systemUptime
-        let (waited, wasReported) = lock.withLock { () -> (Double, Bool) in
-            defer { pendingSince = nil; reported = false }
-            return (now - (pendingSince ?? now), reported)
+        enum Outcome { case nothing, recovered(Double), busy(Double, String), calm }
+        let outcome = lock.withLock { () -> Outcome in
+            let waited = now - (pendingSince ?? now)
+            let wasReported = reported
+            pendingSince = nil
+            reported = false
+            if wasReported { return .recovered(waited) }
+            // Busy: answering, but so slowly the window barely gets to draw.
+            if waited > 0.25 {
+                slowBeats += 1
+                slowWorst = max(slowWorst, waited)
+                if slowBeats == 5, !reportedSlow {
+                    reportedSlow = true
+                    return .busy(slowWorst, currentStep)
+                }
+            } else {
+                slowBeats = 0
+                slowWorst = 0
+                if reportedSlow {
+                    reportedSlow = false
+                    return .calm
+                }
+            }
+            return .nothing
         }
-        if wasReported { ActivityLog.add("Sintr is responding again after \(Int(waited)) s") }
+        switch outcome {
+        case .nothing: break
+        case .recovered(let waited): ActivityLog.add("Sintr is responding again after \(Int(waited)) s")
+        case .busy(let worst, let step):
+            ActivityLog.add("Sintr's window is very busy (up to \(Int(worst * 1000)) ms to answer, 5 s in a row). Audio was: \(step.isEmpty ? "idle" : step)")
+        case .calm: ActivityLog.add("Sintr's window is answering normally again")
+        }
     }
 }

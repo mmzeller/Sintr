@@ -195,6 +195,8 @@ final class AudioPipe: @unchecked Sendable {
         var sum: Float = 0
         for i in stride(from: 0, to: frames, by: 2) { sum += data[i] * data[i] }
         let rms = (sum / Float((frames + 1) / 2)).squareRoot()
+        // A garbled buffer (a device switching underneath us) can hold NaN or infinity.
+        guard rms.isFinite else { return 0 }
         let db = 20 * log10(max(rms, 0.000_001))
         return min(max((db + 55) / 55, 0), 1)
     }

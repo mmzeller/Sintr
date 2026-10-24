@@ -29,7 +29,9 @@ final class SystemAudioCapture: @unchecked Sendable {
     let target: AppTarget?
     private var handler: (@Sendable (AVAudioPCMBuffer) -> Void)?
     private let ioQueue = DispatchQueue(label: "Sintr.CallAudio.io", qos: .userInitiated)
-    private let controlQueue = DispatchQueue(label: "Sintr.CallAudio.control")
+    /// The `CaptureController`'s queue: the microphone and call audio are set up one step at a
+    /// time on it, so a Bluetooth switch (AirPods) never has both rebuilding at once.
+    private let controlQueue: DispatchQueue
     /// Property listeners must not run on the queue that removes them, or removing can deadlock.
     private let listenerQueue = DispatchQueue(label: "Sintr.CallAudio.listener")
     private var tapID = AudioObjectID(kAudioObjectUnknown)
@@ -38,6 +40,10 @@ final class SystemAudioCapture: @unchecked Sendable {
     private var tappedObjects: [AudioObjectID] = []
     private var watchTimer: DispatchSourceTimer?
     private var outputListener: AudioObjectPropertyListenerBlock?
+    /// A pending "output device changed" rebuild; AirPods send several changes in a row.
+    private var pendingOutputChange: DispatchWorkItem?
+    /// The output device the current tap was built on.
+    private var builtOutputUID = ""
     private var stopped = false
     private var generation = 0
 
@@ -54,8 +60,9 @@ final class SystemAudioCapture: @unchecked Sendable {
     private var rateCheckFrames: Double = 0
     private var rateChecked = false
 
-    init(source: MeetingAudio, target: AppTarget?) {
+    init(source: MeetingAudio, target: AppTarget?, queue: DispatchQueue) {
         self.source = source
+        controlQueue = queue
         if case .app(let bundleID) = source {
             self.target = target ?? AppTarget(bundleID: bundleID, bundleName: nil, name: bundleID)
         } else {
@@ -73,22 +80,26 @@ final class SystemAudioCapture: @unchecked Sendable {
         }
     }
 
+    /// Call on the capture queue.
     func start(handler: @escaping @Sendable (AVAudioPCMBuffer) -> Void) throws {
+        dispatchPrecondition(condition: .onQueue(controlQueue))
         self.handler = handler
         lock.withLock { startUptime = ProcessInfo.processInfo.systemUptime }
-        try controlQueue.sync { try rebuild(reason: "start") }
+        try rebuild(reason: "start")
         listenForOutputChanges()
         if case .app = source { watchForAppAudio() }
     }
 
+    /// Call on the capture queue.
     func stop() {
-        controlQueue.sync {
-            stopped = true
-            watchTimer?.cancel()
-            watchTimer = nil
-            removeOutputListener()
-            tearDownTap()
-        }
+        dispatchPrecondition(condition: .onQueue(controlQueue))
+        stopped = true
+        pendingOutputChange?.cancel()
+        pendingOutputChange = nil
+        watchTimer?.cancel()
+        watchTimer = nil
+        removeOutputListener()
+        tearDownTap()
         handler = nil
         ActivityLog.add("Call audio: stopped")
     }
@@ -146,6 +157,7 @@ final class SystemAudioCapture: @unchecked Sendable {
                 AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice,
                 default: AudioDeviceID(kAudioObjectUnknown))
             let outputUID: CFString = try Self.read(output, kAudioDevicePropertyDeviceUID, default: "" as CFString)
+            builtOutputUID = outputUID as String
             let outputName: CFString = (try? Self.read(output, kAudioObjectPropertyName, default: "" as CFString)) ?? "" as CFString
             var streamDescription: AudioStreamBasicDescription = try Self.read(
                 tapID, kAudioTapPropertyFormat, default: AudioStreamBasicDescription())
@@ -341,15 +353,34 @@ final class SystemAudioCapture: @unchecked Sendable {
     private func listenForOutputChanges() {
         let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             guard let self else { return }
-            // Give the new device a moment to settle, then follow it.
-            self.controlQueue.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                guard let self, !self.stopped else { return }
-                ActivityLog.add("Call audio: the output device changed")
-                try? self.rebuild(reason: "output device changed")
-            }
+            self.controlQueue.async { self.outputChanged() }
         }
         outputListener = listener
         AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &outputAddress, listenerQueue, listener)
+    }
+
+    /// Follows a new output device once things settle: AirPods send several changes in a row
+    /// (connect, then switch to their headset mode), and rebuilding for each one at the same
+    /// time as the microphone restarts only makes the switch slower.
+    private func outputChanged() {
+        guard !stopped else { return }
+        pendingOutputChange?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.stopped else { return }
+            self.pendingOutputChange = nil
+            let device: AudioDeviceID = (try? Self.read(
+                AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice,
+                default: AudioDeviceID(kAudioObjectUnknown))) ?? AudioDeviceID(kAudioObjectUnknown)
+            let uid = ((try? Self.read(device, kAudioDevicePropertyDeviceUID, default: "" as CFString)) ?? "" as CFString) as String
+            if !uid.isEmpty, uid == self.builtOutputUID, self.aggregateID != kAudioObjectUnknown {
+                ActivityLog.add("Call audio: output device notice, but it's the same device — keeping the capture as it is")
+                return
+            }
+            ActivityLog.add("Call audio: the output device changed")
+            try? self.rebuild(reason: "output device changed")
+        }
+        pendingOutputChange = work
+        controlQueue.asyncAfter(deadline: .now() + 0.8, execute: work)
     }
 
     private func removeOutputListener() {
