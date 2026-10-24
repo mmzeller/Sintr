@@ -79,7 +79,7 @@ SUMMARY=$(echo "$LAYOUT" | grep -E "TOO WIDE|Control|RESULT" | sed -e 's/%/%25/g
 if [ $LAYOUT_STATUS -eq 0 ]; then
   echo "::notice title=iPhone layout check::${SUMMARY}"
 else
-  echo "::error title=iPhone layout check::${SUMMARY:-The check didn't finish (no RESULT line)}"
+  echo "::error title=iPhone layout check::${SUMMARY:-The check did not finish (no RESULT line)}"
 fi
 echo "$LAYOUT" > shots/layout-check.txt
 
