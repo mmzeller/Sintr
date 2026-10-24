@@ -90,6 +90,19 @@ struct AudioSelfTest {
                   "a child process has the same responsible process as its parent")
         }
 
+        // The private calls Sintr uses to check and ask for "System Audio Recording" permission.
+        // Without them Sintr still works (it records and watches for silence), so this warns.
+        let tcc = dlopen("/System/Library/PrivateFrameworks/TCC.framework/Versions/A/TCC", RTLD_NOW)
+        let tccOK = tcc != nil && dlsym(tcc, "TCCAccessPreflight") != nil && dlsym(tcc, "TCCAccessRequest") != nil
+        if tccOK {
+            print("✓ the system-audio permission check is available")
+        } else {
+            print("⚠ the system-audio permission check isn't available on this macOS; Sintr falls back to watching for silence")
+            if ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] != nil {
+                print("::warning title=Permission check::TCCAccessPreflight/TCCAccessRequest not found on this macOS")
+            }
+        }
+
         let audio = AudioProcesses.processes()
         print("Processes registered with Core Audio here: \(audio.count) — \(AudioProcesses.describe(Array(audio.prefix(12))))")
         check(true, "lists Core Audio's processes without errors")

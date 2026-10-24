@@ -196,6 +196,58 @@ jobs:
           grep -qx "portable=true" <<<"$OUT"
           grep -qx "note=true settings=true" <<<"$OUT"
 
+  next:
+    name: macOS 27 + Xcode 27
+    # The next macOS and Xcode: builds for iPhone and Mac with Xcode 27, then runs the Mac app
+    # and its checks on macOS 27 itself.
+    runs-on: xcode-27
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use the newest Xcode 27
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
+          xcodebuild -version
+          sw_vers
+          echo "::notice title=Versions::$(sw_vers -productVersion) ($(sw_vers -buildVersion)), $(xcodebuild -version | head -1)"
+          xcodebuild -downloadComponent MetalToolchain >/dev/null 2>&1 || true
+
+      - name: Build for iPhone with Xcode 27
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild build -project Sintr.xcodeproj -scheme Sintr -configuration Debug \
+            -destination "generic/platform=iOS" -skipPackagePluginValidation -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee ios.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" ios.log || { grep -E ": error: " ios.log | sort -u | head -10 | while IFS= read -r l; do echo "::error::$l"; done; exit 1; }
+          echo "::notice title=Xcode 27 warnings (iPhone)::$(grep -cE 'warning: .*/Sintr/' ios.log || true) in Sintr's code"
+
+      - name: Build the Mac app with Xcode 27 (like make-portable.sh)
+        shell: bash
+        run: |
+          set -o pipefail
+          bash make-portable.sh "$RUNNER_TEMP" 2>&1 | tee mac.log
+          echo "::notice title=Xcode 27 warnings (Mac)::$(grep -cE 'warning: .*/Sintr/' mac.log || true) in Sintr's code"
+
+      - name: Run Sintr on macOS 27 (storage, window layout, command line, MCP)
+        if: always()
+        shell: bash
+        run: |
+          P="$RUNNER_TEMP/Sintr Portable"
+          codesign --verify --deep --strict "$P/Sintr.app"
+          bash scripts/ci-storage-check.sh "$P/Sintr.app" "macOS 27"
+          grep -qx "note=true settings=true" "$RUNNER_TEMP/last-check.txt"
+          OUT=$(perl -e 'alarm 120; exec @ARGV' "$P/Sintr.app/Contents/MacOS/Sintr" --layout-check 2>&1) && CODE=0 || CODE=$?
+          echo "$OUT" | grep -v "^$" | tail -10 || true
+          [ $CODE -eq 0 ]
+          bash scripts/ci-connect-check.sh "build/portable/Build/Products/Release/Sintr.app"
+
+      - name: Check the audio helpers on macOS 27 (Safari's media process, permissions lookup)
+        if: always()
+        run: bash scripts/ci-audio-check.sh
+
   screens:
     name: iPhone screenshots
     runs-on: macos-26
