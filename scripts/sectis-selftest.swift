@@ -31,6 +31,35 @@ struct SectisSelfTest {
         check(SectisFormat.parseJoinCode("SECTIS-nonsense") == nil, "rejects a broken code")
         check(SectisFormat.parseJoinCode("") == nil, "rejects an empty code")
 
+        // However it gets pasted (a phone's clipboard, a chat app, smart punctuation…).
+        let code = (fixture["joinCode"] as! String).components(separatedBy: .whitespacesAndNewlines).joined()
+        let body = String(code.dropFirst("SECTIS-".count))
+        func reads(_ text: String, _ label: String) {
+            let parsed = SectisFormat.parseJoinCode(text)
+            check(parsed == link, "reads a join code \(label)")
+            check(SectisFormat.normalizedJoinCode(text) == code, "…and tidies it back to the original")
+            check(SectisFormat.joinCodeProblem(text) == nil, "…with no complaint")
+        }
+        reads("Here's the code: \(code). Thanks!", "inside a sentence")
+        reads("\u{201C}\(code)\u{201D}", "in curly quotes")
+        reads(code.replacingOccurrences(of: "-", with: "\u{2014}"), "whose dashes became em dashes")
+        reads(code.replacingOccurrences(of: "-", with: "\u{2013}"), "whose dashes became en dashes")
+        reads(String(code.prefix(40)) + "\u{200B}" + String(code.dropFirst(40)), "with an invisible space in it")
+        reads(String(code.prefix(60)) + "\n" + String(code.dropFirst(60)) + "\n", "split over lines")
+        reads(code.lowercased().hasPrefix("sectis-") ? code : "sectis-" + body, "with a lowercase prefix")
+        check(SectisFormat.parseJoinCode(body) == link, "reads the code without its SECTIS- prefix")
+
+        let cut = String(code.prefix(90))
+        check(SectisFormat.parseJoinCode(cut) == nil, "rejects a cut-off code")
+        check(SectisFormat.joinCodeProblem(cut)?.contains("cut off") == true,
+              "says a cut-off code is cut off: \(SectisFormat.joinCodeProblem(cut) ?? "nil")")
+        check(SectisFormat.joinCodeProblem("hunter2")?.contains("start with SECTIS-") == true, "says a non-code isn't a join code")
+        check(SectisFormat.joinCodeProblem("  ")?.hasPrefix("Paste") == true, "asks for a code when there's nothing")
+        var changed = Array(code)
+        changed[30] = changed[30] == "A" ? "B" : "A"
+        check(SectisFormat.parseJoinCode(String(changed)) == nil || SectisFormat.parseJoinCode(String(changed)) != link,
+              "doesn't accept a changed code as the original")
+
         let space = SectisFormat.space(for: link.key)
         check(space == fixture["space"] as? String, "same space as Sectis: \(space)")
         let started = Date()

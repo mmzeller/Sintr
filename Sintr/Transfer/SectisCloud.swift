@@ -30,7 +30,7 @@ enum SectisCloud {
 
     static func connect(joinCode: String, baseURL: String = firestoreAPI) async throws -> Connection {
         guard let link = SectisFormat.parseJoinCode(joinCode) else {
-            throw Failure(message: "That isn't a Sectis join code. \(joinCodeHelp)")
+            throw Failure(message: SectisFormat.joinCodeProblem(joinCode) ?? "That isn't a Sectis join code. \(joinCodeHelp)")
         }
         // Making the key takes a moment (150,000 rounds), so it happens off the main thread.
         let derived = await Task.detached(priority: .userInitiated) { () -> (String, Data?) in

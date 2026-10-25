@@ -14,11 +14,73 @@ enum SectisFormat {
         var key: String
     }
 
-    /// Reads a join code ("SECTIS-…"), the one Sectis shows in Settings → Sync.
-    static func parseJoinCode(_ code: String) -> Link? {
-        var raw = code.components(separatedBy: .whitespacesAndNewlines).joined()
-        if raw.uppercased().hasPrefix("SECTIS-") { raw = String(raw.dropFirst(7)) }
-        raw = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+    /// Reads a join code ("SECTIS-…"), the one Sectis shows in Settings → Sync — however it
+    /// was pasted: inside other text, split over lines, with dashes swapped by smart
+    /// punctuation or invisible characters picked up on the way.
+    static func parseJoinCode(_ text: String) -> Link? {
+        for body in candidates(in: text) {
+            if let link = decode(body) { return link }
+        }
+        return nil
+    }
+
+    /// The join code tidied up ("SECTIS-" and the code itself), or nil if it can't be read.
+    static func normalizedJoinCode(_ text: String) -> String? {
+        candidates(in: text).first { decode($0) != nil }.map { "SECTIS-" + $0 }
+    }
+
+    /// Why a pasted join code can't be used, in words; nil if it's fine.
+    static func joinCodeProblem(_ text: String) -> String? {
+        let cleaned = clean(text)
+        if cleaned.isEmpty { return "Paste the join code first." }
+        if parseJoinCode(text) != nil { return nil }
+        guard let range = cleaned.range(of: "SECTIS-", options: .caseInsensitive) else {
+            return "That isn't a Sectis join code — it should start with SECTIS-. In Sectis, open Settings → Sync → Add Another Device and tap Copy Code."
+        }
+        let body = cleaned[range.upperBound...].prefix(while: isCodeCharacter)
+        if body.count < 120 {
+            return "That join code looks cut off (\(body.count) characters after SECTIS-; a whole one is usually 250 or more). In Sectis, tap Copy Code and paste it again."
+        }
+        return "That join code has been changed somewhere along the way, so it can't be read. In Sectis, tap Copy Code and paste it again."
+    }
+
+    // MARK: Reading a pasted code
+
+    /// Dashes that smart punctuation or another app may have swapped in for "-".
+    private static let dashes: [String] = ["\u{2010}", "\u{2011}", "\u{2012}", "\u{2013}", "\u{2014}", "\u{2015}", "\u{2212}", "\u{FE63}", "\u{FF0D}"]
+    /// Characters that don't show but come along when copying.
+    private static let invisible: Set<Unicode.Scalar> = ["\u{200B}", "\u{200C}", "\u{200D}", "\u{2060}", "\u{FEFF}", "\u{00AD}"]
+
+    private static func clean(_ text: String) -> String {
+        var result = text
+        for dash in dashes { result = result.replacingOccurrences(of: dash, with: "-") }
+        return String(String.UnicodeScalarView(result.unicodeScalars.filter {
+            !invisible.contains($0) && !CharacterSet.whitespacesAndNewlines.contains($0)
+        }))
+    }
+
+    private static func isCodeCharacter(_ character: Character) -> Bool {
+        guard character.isASCII, let ascii = character.asciiValue else { return false }
+        return (ascii >= 48 && ascii <= 57) || (ascii >= 65 && ascii <= 90) || (ascii >= 97 && ascii <= 122)
+            || "-_+/=".contains(character)
+    }
+
+    /// The code itself (without "SECTIS-"): what follows the prefix if there is one, and the
+    /// whole text as a fallback.
+    private static func candidates(in text: String) -> [String] {
+        let cleaned = clean(text)
+        var result: [String] = []
+        if let range = cleaned.range(of: "SECTIS-", options: .caseInsensitive) {
+            result.append(String(cleaned[range.upperBound...].prefix(while: isCodeCharacter)))
+        }
+        result.append(String(cleaned.filter(isCodeCharacter)))
+        return result.filter { !$0.isEmpty }
+    }
+
+    private static func decode(_ body: String) -> Link? {
+        var raw = body.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        raw = raw.trimmingCharacters(in: CharacterSet(charactersIn: "="))
+        guard raw.count % 4 != 1 else { return nil }
         while raw.count % 4 != 0 { raw += "=" }
         guard let data = Data(base64Encoded: raw),
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],

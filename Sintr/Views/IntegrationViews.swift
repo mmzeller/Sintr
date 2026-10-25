@@ -343,6 +343,10 @@ private struct IntegrationSettingsRow: View {
     @State private var testing = false
     @State private var status: String?
     @State private var loaded = false
+    /// Sectis: why the pasted join code can't be used, and which Firebase project the saved
+    /// one points to.
+    @State private var keyProblem: String?
+    @State private var sectisProject: String?
 
     var body: some View {
         DisclosureGroup {
@@ -351,7 +355,9 @@ private struct IntegrationSettingsRow: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if kind.needsKey {
+                if kind == .sectis {
+                    sectisJoinCode
+                } else if kind.needsKey {
                     if hasKey {
                         HStack {
                             Label("\(kind.keyLabel) saved", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
@@ -429,11 +435,79 @@ private struct IntegrationSettingsRow: View {
         .onAppear {
             config = IntegrationSettings.config(kind)
             hasKey = IntegrationSettings.secret(kind) != nil
+            if kind == .sectis { sectisProject = IntegrationSettings.secret(.sectis).flatMap(SectisFormat.parseJoinCode)?.projectId }
             loaded = true
         }
         .onChange(of: config) { _, value in
             if loaded { IntegrationSettings.save(value, for: kind) }
         }
+    }
+
+    /// Sectis: paste the join code (or type it), checked before it's saved. Not a password
+    /// field: you can see what was pasted, and Paste reads the clipboard straight in.
+    @ViewBuilder private var sectisJoinCode: some View {
+        if hasKey {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Label("Join code saved", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    Text(sectisProject.map { "Firebase project: \($0)" } ?? "This saved code can't be read — remove it and paste it again.")
+                        .font(.caption)
+                        .foregroundStyle(sectisProject == nil ? Color.orange : .secondary)
+                }
+                Spacer()
+                Button("Remove", role: .destructive) {
+                    IntegrationSettings.setSecret(nil, for: kind)
+                    hasKey = false
+                    sectisProject = nil
+                    status = nil
+                }
+                .buttonStyle(.borderless)
+            }
+        } else {
+            HStack(spacing: 10) {
+                PasteButton(payloadType: String.self) { strings in
+                    let text = strings.joined(separator: "\n")
+                    Task { @MainActor in saveJoinCode(text) }
+                }
+                .labelStyle(.titleAndIcon)
+                Text("the code from Sectis → Settings → Sync → Add Another Device → Copy Code")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+            HStack {
+                TextField("Join code", text: $keyDraft, prompt: Text("Or type it: SECTIS-…"))
+                    .autocorrectionDisabled()
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    #endif
+                    .privacySensitive()
+                Button("Save") { saveJoinCode(keyDraft) }
+                    .buttonStyle(.borderless)
+                    .disabled(keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            if let keyProblem {
+                Label(keyProblem, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .lineLimit(5)
+            }
+        }
+    }
+
+    private func saveJoinCode(_ text: String) {
+        if let problem = SectisFormat.joinCodeProblem(text) {
+            keyProblem = problem
+            return
+        }
+        guard let code = SectisFormat.normalizedJoinCode(text) else { return }
+        IntegrationSettings.setSecret(code, for: .sectis)
+        keyDraft = ""
+        keyProblem = nil
+        status = nil
+        hasKey = IntegrationSettings.secret(.sectis) != nil
+        sectisProject = SectisFormat.parseJoinCode(code)?.projectId
+        if !hasKey { keyProblem = "The join code couldn't be saved in this \(Platform.deviceName)'s Keychain. Try again." }
     }
 
     private func test() {
