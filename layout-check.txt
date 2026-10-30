@@ -1,0 +1,17 @@
+iPhone layout check: is anything wider than the screen?
+  320 points, default text: widest is Note screen, My notes tab at 320
+  320 points, largest text: widest is Note screen, Ask tab at 320
+  320 points, accessibility text 1: widest is Note screen, My notes tab at 320
+  320 points, accessibility text 3: widest is Note screen, My notes tab at 320
+  375 points, default text: widest is Note screen, My notes tab at 375
+  375 points, largest text: widest is Note screen, Enhanced tab at 375
+  375 points, accessibility text 1: widest is Note screen, Enhanced tab at 375
+  375 points, accessibility text 3: widest is Note screen, Enhanced tab at 375
+  390 points, default text: widest is Note screen, My notes tab at 390
+  390 points, largest text: widest is Note screen, Enhanced tab at 390
+  390 points, accessibility text 1: widest is Note screen, Enhanced tab at 390
+  390 points, accessibility text 3: widest is Note screen, Enhanced tab at 390
+Control (old tab picker): 320 points wide on a 320-point screen — fits; this measuring may not match the phone's
+Control (old transcript buttons): 465 points wide on a 320-point screen — too wide, as on the phone
+RESULT: everything fits
+io.github.mmzeller.Sintr.iphone: 45867
