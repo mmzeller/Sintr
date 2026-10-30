@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 /// For the automated screenshots (scripts/ci-screenshots.sh): launching with
-/// `--demo-note enhanced|new|review|card|empty|transcript` opens a sample note, so the note screen
+/// `--demo-note enhanced|new|review|card|sent|empty|transcript` opens a sample note, so the note screen
 /// can be checked at different text sizes without a phone. `--demo-width 320` also lays the app
 /// out 320 points wide — an iPhone with Display Zoom set to Larger Text — with red lines at the
 /// edges, so anything wider than that screen shows past them. Does nothing without these.
@@ -47,6 +47,7 @@ enum ScreenshotDemo {
         switch mode {
         case "new", "empty": note = newNote
         case "card": note = shortNote
+        case "sent": note = sentNote
         case "transcript": note = transcriptNote
         default: note = enhancedNote
         }
@@ -88,6 +89,27 @@ enum ScreenshotDemo {
         note.speakerNames = ["Speaker 1": "Me"]
         note.duration = 48
         note.recordings = [NoteRecording(fileName: "demo.m4a", speaker: "", offset: 0)]
+        return note
+    }
+
+    /// A note whose action items went to a Sectis project: its card lists them, done or not.
+    private static var sentNote: Note {
+        var note = enhancedNote
+        note.id = UUID(uuidString: "5A5A5A5A-0000-4000-8000-000000000005")!
+        note.title = "Council AV check-in (sent)"
+        note.enhanced = """
+            ## Summary
+            The Tuesday stream test dropped twice when the Pearl-2 switched layouts.
+
+            ## Action items
+            - [ ] Update the Pearl-2 firmware — Me, by Friday
+            - [ ] Run a second stream test after the update — Me, next Tuesday
+            - [ ] Get final Vimeo Enterprise pricing — Me, Oct 31
+            - [ ] Send Vimeo the attendance numbers — Dana
+            """
+        note.sectisPlace = Sectis.demoPlaces[1]
+        let ids = Sectis.items(in: note, includeWaiting: true).map { SectisFormat.itemID(noteID: note.id.uuidString, title: $0.idTitle) }
+        note.sentTo = [NoteSend(destination: "Sectis (4 to-dos, 1 waiting · Q4 streaming upgrade)", items: ids)]
         return note
     }
 

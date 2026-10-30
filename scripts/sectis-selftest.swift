@@ -83,11 +83,48 @@ struct SectisSelfTest {
         let sealed = try SectisFormat.encrypt(record, key: key)
         let roundTrip = try SectisFormat.decrypt(c: sealed.c, iv: sealed.iv, key: key)
         check(roundTrip["title"] as? String == "Send the budget — café ✓", "decrypts its own to-do")
+        let project = SectisFormat.Place(kind: .project, id: "proj123", title: "Q4 rollout", area: "Council")
+        let waitingID = SectisFormat.itemID(noteID: "B1A2C3D4-0000-4000-8000-000000000001", title: "Send the revised quote")
+        let waitingRecord = SectisFormat.todoRecord(
+            id: waitingID, title: "Send the revised quote", notes: "From “Weekly sync” — [Open in Sintr](sintr://note/B1A2C3D4-0000-4000-8000-000000000001)",
+            deadline: nil, tags: ["tag123", "ptag"], order: -5, now: Date(), place: project,
+            checklist: ["With the new rates", "Copy finance"],
+            waiting: .init(person: "Dana", since: "2026-10-22", followUp: "2026-10-30"))
+        let waitingSealed = try SectisFormat.encrypt(waitingRecord, key: key)
+        let areaRecord = SectisFormat.todoRecord(id: "snarea0000001", title: "Book the room", notes: "", deadline: nil, tags: [],
+                                                 order: 0, now: Date(), place: .init(kind: .area, id: "area9", title: "Home"))
+        let areaSealed = try SectisFormat.encrypt(areaRecord, key: key)
         let out: [String: Any] = [
             "space": space, "c": sealed.c, "iv": sealed.iv,
             "expected": ["id": id, "title": "Send the budget — café ✓", "notes": notes, "deadline": "2026-10-23"],
+            "waiting": ["c": waitingSealed.c, "iv": waitingSealed.iv, "id": waitingID],
+            "area": ["c": areaSealed.c, "iv": areaSealed.iv],
         ]
         try JSONSerialization.data(withJSONObject: out).write(to: URL(fileURLWithPath: args[2]))
+
+        // MARK: Projects, areas and what became of a to-do
+        let places = SectisFormat.places(
+            projects: [
+                ["id": "p1", "title": "Q4 rollout", "areaId": "a1", "status": "open", "order": 2],
+                ["id": "p2", "title": "Done project", "areaId": "a1", "status": "done", "order": 1],
+                ["id": "p3", "title": "", "areaId": NSNull(), "status": "open", "order": 0],
+                ["id": "p4", "title": "Trashed", "status": "open", "trashed": true],
+                ["id": "p5", "title": "A template", "status": "open", "isTemplate": true],
+                ["id": "p6", "title": "Lost area", "areaId": "gone", "status": "open", "order": 5],
+            ],
+            areas: [["id": "a2", "title": "Home", "order": 2], ["id": "a1", "title": "Council", "order": 1]])
+        check(places.map(\.fullTitle) == ["Council", "Council › Q4 rollout", "Home", "New Project", "Lost area"],
+              "projects and areas to pick from, open projects under their area: \(places.map(\.fullTitle))")
+        check(places[1].kind == .project && places[1].id == "p1" && places[0].kind == .area, "kinds and ids")
+        let placeJSON = try JSONEncoder().encode(places[1])
+        check((try? JSONDecoder().decode(SectisFormat.Place.self, from: placeJSON)) == places[1], "a place is saved and read back")
+
+        let doneState = SectisFormat.todoState(id: "x", record: ["title": "Send it", "status": "done", "waitFor": "Dana", "when": "2026-10-30"])
+        check(doneState.status == .done && doneState.isFinished && doneState.waitingOn == nil, "a completed to-do is done (no longer waiting)")
+        let waitState = SectisFormat.todoState(id: "y", record: ["title": "Quote", "status": "open", "waitFor": "Dana", "when": "2026-10-30", "projectId": "p1"])
+        check(waitState.waitingOn == "Dana" && waitState.followUp == "2026-10-30" && waitState.projectId == "p1", "an open waiting to-do says who and when")
+        check(SectisFormat.todoState(id: "z", record: ["title": "Old", "status": "open", "trashed": true]).isGone, "a to-do in Sectis's Trash is gone")
+        check(SectisFormat.todoState(id: "z", record: nil, deleted: true).status == .deleted, "a deleted one is deleted")
 
         // MARK: Action items
         var calendar = Calendar(identifier: .gregorian)
@@ -168,6 +205,64 @@ struct SectisSelfTest {
                 ("Follow up re: pricing", nil),
                 ("Check the Pearl-2 firmware", "2026-10-30"),
             ])
+
+        // Other people's items, for Waiting For.
+        func theirs(_ markdown: String, solo: Bool) -> [String] {
+            ActionItemParser.items(in: markdown, names: names, meetingDate: meeting, calendar: calendar)
+                .filter { !ActionItemParser.isMine($0, names: names, solo: solo) }
+                .compactMap { item in ActionItemParser.someoneElse(item, names: names).map { "\(item.title) | \($0) | \(item.deadline ?? "-")" } }
+        }
+        let meetingNotes = """
+            ## Summary
+            - [ ] Vimeo pricing still open
+            ## Action items
+            - [ ] Send the updated budget to finance — Me, by Friday
+            - [ ] Book the conference room — Dana
+            - [ ] Share slides — Dana, Me
+            - [ ] **Sam**: test the stream by Oct 30
+            - [ ] Dana to send me the contract
+            - [ ] Order cables (Owner: Dana Lee, due Friday)
+            - [ ] Update the wiki
+            - [ ] Everyone — read the policy
+            - [ ] Check the mics — Owner TBD
+            ### Priya
+            - [ ] Draft the press release
+            ## Vimeo Pricing
+            - [ ] Ask about the nonprofit rate
+            """
+        let others = theirs(meetingNotes, solo: false)
+        let wantOthers = [
+            "Book the conference room | Dana | -",
+            "Test the stream by Oct 30 | Sam | 2026-10-30",
+            "Send me the contract | Dana | -",
+            "Order cables | Dana Lee | 2026-10-23",
+            "Draft the press release | Priya | -",
+        ]
+        check(others == wantOthers, "other people's items, for Waiting For: \(others.count)")
+        if others != wantOthers {
+            print("    expected: \(wantOthers)")
+            print("    got:      \(others)")
+        }
+        let groupedOthers = theirs("""
+            **Matthew**
+            - [ ] Renew the SSL certificate
+            **Dana**
+            - [ ] Order HDMI cables
+            ## Dana's next steps
+            - Post the minutes
+            ## Next steps for Sam
+            - Fix the projector
+            **Decisions:**
+            - [ ] Keep the budget
+            """, solo: false)
+        check(groupedOthers == ["Order HDMI cables | Dana | -", "Post the minutes | Dana | -", "Fix the projector | Sam | -"],
+              "items listed under someone else: \(groupedOthers)")
+        check(theirs("## Follow-ups\n- Call the plumber\n- Dana: pick up the dog food", solo: true) == ["Pick up the dog food | Dana | -"],
+              "a voice memo's item for someone else")
+        check(ActionItemParser.personName("@dana") == "Dana" && ActionItemParser.personName("Dana's") == "Dana"
+              && ActionItemParser.personName("Dana (PM)") == "Dana" && ActionItemParser.personName("dana and sam") == "Dana and Sam",
+              "names to wait on read cleanly")
+        check(ActionItemParser.personName("TBD") == nil && ActionItemParser.personName("unassigned") == nil, "no one to wait on for TBD")
 
         // Reworded before sending: the Sectis ID still comes from the first wording.
         let call = mine("- [ ] Send the updated budget to finance — Me, by Friday", solo: false).first
@@ -284,6 +379,49 @@ struct SectisSelfTest {
         let second = try await SectisCloud.createEach(connection, writes)
         check(second == [.exists, .exists], "sending the same items again changes nothing: \(second)")
 
+        // A project and an area as Sectis writes them; Sintr lists them and reads items back.
+        let areaRecord: [String: Any] = ["id": "areaemu00001", "title": "Council", "tags": ["atag"], "order": 1]
+        let projectRecord: [String: Any] = [
+            "id": "projemu00001", "type": "project", "title": "Q4 rollout", "notes": "", "status": "open", "start": "anytime",
+            "areaId": "areaemu00001", "tags": ["ptag"], "order": 0, "trashed": false, "isTemplate": false, "logged": false,
+        ]
+        let listWrites = [
+            try SectisCloud.createWrite(connection, id: "areaemu00001", kind: "area", record: areaRecord, version: version),
+            try SectisCloud.createWrite(connection, id: "projemu00001", kind: "project", record: projectRecord, version: version),
+        ]
+        check(try await SectisCloud.createEach(connection, listWrites) == [.created, .created], "writes a project and an area (as Sectis would)")
+        let places = try await SectisCloud.readPlaces(connection)
+        check(places.map(\.fullTitle) == ["Council", "Council › Q4 rollout"], "reads your projects and areas: \(places.map(\.fullTitle))")
+
+        let project = places.first { $0.kind == .project }
+        let waitingID = SectisFormat.itemID(noteID: noteID, title: "Send the revised quote")
+        let waitingRecord = SectisFormat.todoRecord(
+            id: waitingID, title: "Send the revised quote", notes: "From “Weekly sync” — [Open in Sintr](sintr://note/\(noteID))",
+            deadline: nil, tags: [tagID ?? "", "ptag", "atag"], order: -1, now: now, place: project,
+            checklist: ["With the new rates"], waiting: .init(person: "Dana", since: "2026-10-22", followUp: "2026-10-30"))
+        let waitingWrite = try SectisCloud.createWrite(connection, id: waitingID, kind: "todo", record: waitingRecord, version: version)
+        check(try await SectisCloud.createEach(connection, [waitingWrite]) == [.created], "Sectis's rules accept a to-do waiting on someone, in a project")
+        ids.append(waitingID)
+
+        let read = try await SectisCloud.readItems(ids + ["snnotthere001"], connection)
+        if case .found(let record)? = read[waitingID] {
+            let state = SectisFormat.todoState(id: waitingID, record: record)
+            check(state.waitingOn == "Dana" && state.projectId == "projemu00001" && state.status == .open,
+                  "reads the waiting to-do back: waiting on \(state.waitingOn ?? "nobody"), project \(state.projectId ?? "none")")
+        } else {
+            check(false, "reads the waiting to-do back")
+        }
+        if case .found(let record)? = read[ids[0]] {
+            check(record["title"] as? String == titles[0], "reads a sent to-do back by its ID")
+        } else {
+            check(false, "reads a sent to-do back by its ID")
+        }
+        if case .missing? = read["snnotthere001"] {
+            check(true, "an ID that isn't there reads as missing")
+        } else {
+            check(false, "an ID that isn't there reads as missing")
+        }
+
         // Outside the space Sectis's rules allow (shorter than 40 characters): refused.
         let outside = SectisCloud.Connection(projectId: connection.projectId, apiKey: connection.apiKey, space: "short",
                                              key: connection.key, baseURL: connection.baseURL)
@@ -301,7 +439,8 @@ struct SectisSelfTest {
         }
 
         var output = (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: out)))) as? [String: Any] ?? [:]
-        output["cloud"] = ["tagID": tagID ?? "", "ids": ids, "titles": titles] as [String: Any]
+        output["cloud"] = ["tagID": tagID ?? "", "ids": Array(ids.prefix(titles.count)), "titles": titles, "waitingID": waitingID,
+                           "projectID": "projemu00001", "areaID": "areaemu00001"] as [String: Any]
         try JSONSerialization.data(withJSONObject: output).write(to: URL(fileURLWithPath: out))
     }
 }

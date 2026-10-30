@@ -67,7 +67,7 @@ enum IntegrationKind: String, CaseIterable, Identifiable, Codable, Sendable {
     var setupHelp: String {
         switch self {
         case .sectis:
-            "Sends only your own action items — unchecked ones whose owner is “Me” or one of the names below — to your Sectis Inbox, tagged Meeting. Turn on sync in Sectis first, then open Settings → Sync → Add Another Device, copy the code that starts with SECTIS- and save it here. Each to-do is encrypted on this \(Platform.deviceName) the same way Sectis does it."
+            "Sends your action items — unchecked ones whose owner is “Me” or one of the names below — to Sectis, tagged Meeting, each with a link back to its note. Other people's go to Sectis's Waiting For. They land in the Inbox, or a project or area you pick for a note or folder. Turn on sync in Sectis first, then open Settings → Sync → Add Another Device, copy the code that starts with SECTIS- and save it here. Each to-do is encrypted on this \(Platform.deviceName) the same way Sectis does it."
         case .notion:
             "Create an internal integration at notion.so/profile/integrations and copy its secret. Then open the page or database notes should go to, choose ••• → Connections → add your integration, and paste that page's link here."
         case .hubspot:
@@ -89,6 +89,22 @@ struct IntegrationConfig: Codable, Equatable, Sendable {
     var target = ""
     var autoSend = false
     var includeTranscript = false
+    /// Sectis only: its own choices.
+    var sectis: SectisOptions?
+}
+
+/// Sectis's own settings, kept with the other integration settings on this device. Every
+/// field is optional, so settings saved by older versions still read.
+struct SectisOptions: Codable, Equatable, Sendable {
+    /// Other people's action items go to Sectis's Waiting For (nil: yes).
+    var waitingFor: Bool?
+    /// Your Sectis's web address, learned when you open a Sintr link from Sectis; Open in
+    /// Sectis uses it.
+    var address: String?
+    /// Where each folder's notes send their to-dos, by folder ID.
+    var folderPlaces: [String: SectisFormat.Place]?
+    /// Your Sectis projects and areas as last read, for the picker while offline.
+    var knownPlaces: [SectisFormat.Place]?
 }
 
 enum IntegrationSettings {

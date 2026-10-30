@@ -182,7 +182,7 @@ In **Settings → Connections**:
 
 ## Sending your action items to Sectis
 
-Sintr can put the action items that are yours into your [Sectis](https://github.com/mmzeller/sectis) Inbox, so they show up on your Mac and iPhone with the rest of your to-dos.
+Sintr can put a meeting's action items into your [Sectis](https://github.com/mmzeller/sectis) to-do list, so they show up on your Mac and iPhone with the rest of your to-dos: yours as to-dos, and other people's in Sectis's **Waiting For**, so you know to follow up.
 
 1. In Sectis, turn on sync (Settings → Sync), then choose **Add Another Device** and **Copy Code**.
 2. In Sintr: **Settings → Integrations → Sectis**, paste the code into **Join code** and press **Save**. **Test connection** checks it.
@@ -190,16 +190,26 @@ Sintr can put the action items that are yours into your [Sectis](https://github.
 
 **Each note has its own Send to Sectis switch**: next to the date on the Mac, on the Enhanced tab on iPhone, and in the Enhance window on both. It starts the way **Send after Enhance** is set; turn it off in a note to skip that meeting, or to look the items over before they go.
 
-**Review & send** (on the Enhanced tab, or **Share → Send to → Sectis**) lists your action items from that note. Untick any you don't want, fix the wording, add, change or remove a deadline, then **Send**. The Enhanced tab also shows how many items are yours and when they were last sent.
+**Where they go:** the **Inbox**, unless you pick one of your Sectis projects or areas. The menu beside the switch (on the Mac), on the Sectis card at the end of the Enhanced tab, in the Enhance window and in Review & send lists them; **Use for Every Note in “folder”** makes it the choice for that whole folder. If a project has since been finished or deleted in Sectis, the items go to the Inbox instead.
+
+**Review & send** (on the Enhanced tab, or **Share → Send to → Sectis**) lists the action items from that note, yours first and then **Waiting on others**. Untick any you don't want, fix the wording, change who an item is waiting on, add, change or remove a deadline or follow-up date, then **Send**.
 
 What gets sent:
 
-- **Only unchecked action items that are yours:** the owner is “Me” (Enhance writes that for your tasks), “you”, “everyone”, or one of the names in **Names you go by** (on a Mac, your account's name if you leave it empty). Items under a heading or label with your name count too, like “**Matthew**” or “Matthew's next steps”.
-- An item that doesn't name an owner is sent only when nobody else is in the note — a voice memo, or notes you typed alone.
-- Each one lands in the **Inbox**, tagged **Meeting**, with the meeting's name and date in its notes. A due date in the item (“by Friday”, “Oct 31”, “end of week”) becomes its deadline.
+- **Your unchecked action items:** the owner is “Me” (Enhance writes that for your tasks), “you”, “everyone”, or one of the names in **Names you go by** (on a Mac, your account's name if you leave it empty). Items under a heading or label with your name count too, like “**Matthew**” or “Matthew's next steps”.
+- **Other people's**, to Waiting For: an item whose owner is someone else (“Send the quote — Dana”, “Dana to send the contract”), or that's listed under their name (“**Dana**”, “Dana's next steps”). It's filed under their name, and a date in it becomes the follow-up date, when it comes back to Sectis's Today. Turn this off in **Settings → Integrations → Sectis → Send other people's items to Waiting For**.
+- An item that doesn't name an owner is yours only when nobody else is in the note — a voice memo, or notes you typed alone. Otherwise it isn't sent.
+- Each one is tagged **Meeting** (and with the project's or area's tags, as Sectis does). Its notes say which meeting it came from, with an **Open in Sintr** link back to the note. Lines indented under an item become its checklist. A due date (“by Friday”, “Oct 31”, “end of week”) becomes its deadline.
 - Automatic sending happens once per note. Use Review & send later to add new items; ones already sent from that note — even if you've reworded them, or completed or deleted them in Sectis — aren't added again.
 
-Sintr writes straight to the Firebase project Sectis syncs through, encrypting each to-do with the key in your join code, so it works even when Sectis isn't open; they appear the next time it is. Your names stay on this device: **Share your setup** leaves the Sectis settings out.
+**After they're sent,** the Sectis card at the end of the Enhanced tab lists them as they are in Sectis now: done, still open (with the deadline), or waiting on someone. On a Mac, click one to open it in Sectis — Sintr learns your Sectis's address the first time you open a Sintr link from Sectis, or you can type it in Settings → Integrations → Sectis.
+
+**Links between the two:**
+
+- **Open in Sintr**, in a to-do's notes in Sectis, opens the meeting's note. (Notes don't sync between your devices, so it opens the note on the device that has it.)
+- **Record in Sintr**, in the ••• menu of a Sectis project, area or to-do, starts a new Sintr note with that title whose action items go back to the same project or area. Sintr asks before it starts recording.
+
+Sintr writes straight to the Firebase project Sectis syncs through, encrypting each to-do with the key in your join code, so it works even when Sectis isn't open; they appear the next time it is. Your names and Sectis choices stay on this device: **Share your setup** leaves the Sectis settings out.
 
 ## Shared folders
 

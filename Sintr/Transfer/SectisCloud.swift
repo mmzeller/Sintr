@@ -40,34 +40,87 @@ enum SectisCloud {
         return Connection(projectId: link.projectId, apiKey: link.apiKey, space: derived.0, key: key, baseURL: baseURL)
     }
 
-    // MARK: Tags
+    // MARK: Reading
 
-    /// Your Sectis tags (decrypted), skipping deleted ones.
-    static func readTags(_ connection: Connection) async throws -> [(id: String, title: String)] {
+    /// Every item of one kind ("tag", "project", "area"…), decrypted, skipping deleted ones.
+    /// Each record has its `id`.
+    static func readRecords(_ kind: String, _ connection: Connection) async throws -> [[String: Any]] {
         let query: [String: Any] = [
             "structuredQuery": [
                 "from": [["collectionId": "items"]],
                 "where": ["fieldFilter": [
-                    "field": ["fieldPath": "k"], "op": "EQUAL", "value": ["stringValue": "tag"],
+                    "field": ["fieldPath": "k"], "op": "EQUAL", "value": ["stringValue": kind],
                 ] as [String: Any]],
             ] as [String: Any],
         ]
         let response = try await request("\(connection.documents)/sectis/\(connection.space):runQuery",
                                          connection: connection, body: query)
-        var tags: [(id: String, title: String)] = []
+        var records: [[String: Any]] = []
         for row in response as? [[String: Any]] ?? [] {
             guard let document = row["document"] as? [String: Any],
-                  let name = document["name"] as? String,
-                  let fields = document["fields"] as? [String: Any] else { continue }
-            if (fields["d"] as? [String: Any])?["booleanValue"] as? Bool == true { continue }
-            guard let c = (fields["c"] as? [String: Any])?["stringValue"] as? String,
-                  let iv = (fields["iv"] as? [String: Any])?["stringValue"] as? String,
-                  let record = try? SectisFormat.decrypt(c: c, iv: iv, key: connection.key),
-                  let title = record["title"] as? String else { continue }
-            let id = (record["id"] as? String) ?? String(name.split(separator: "/").last ?? "")
-            tags.append((id, title))
+                  case .found(var record) = item(in: document, connection) else { continue }
+            if record["id"] as? String == nil { record["id"] = documentID(document) }
+            records.append(record)
         }
-        return tags
+        return records
+    }
+
+    /// What's in one document: a record, or a deleted item's marker.
+    enum ItemRead {
+        case found([String: Any])
+        case deleted
+        case missing
+    }
+
+    private static func documentID(_ document: [String: Any]) -> String {
+        String((document["name"] as? String)?.split(separator: "/").last ?? "")
+    }
+
+    private static func item(in document: [String: Any], _ connection: Connection) -> ItemRead {
+        guard let fields = document["fields"] as? [String: Any] else { return .missing }
+        if (fields["d"] as? [String: Any])?["booleanValue"] as? Bool == true { return .deleted }
+        guard let c = (fields["c"] as? [String: Any])?["stringValue"] as? String,
+              let iv = (fields["iv"] as? [String: Any])?["stringValue"] as? String,
+              let record = try? SectisFormat.decrypt(c: c, iv: iv, key: connection.key) else { return .missing }
+        return .found(record)
+    }
+
+    /// The items with these IDs, as they are in Sectis now. IDs Firestore doesn't have are
+    /// `.missing`; ones deleted in Sectis (emptied from its Trash) are `.deleted`.
+    static func readItems(_ ids: [String], _ connection: Connection) async throws -> [String: ItemRead] {
+        var result: [String: ItemRead] = [:]
+        let unique = Array(Set(ids.filter { !$0.isEmpty }))
+        for start in stride(from: 0, to: unique.count, by: 100) {
+            let chunk = Array(unique[start..<min(start + 100, unique.count)])
+            let body: [String: Any] = ["documents": chunk.map { "\(connection.items)/\($0)" }]
+            let response = try await request("\(connection.documents):batchGet", connection: connection, body: body)
+            for row in response as? [[String: Any]] ?? [] {
+                if let document = row["found"] as? [String: Any] {
+                    result[documentID(document)] = item(in: document, connection)
+                } else if let name = row["missing"] as? String {
+                    result[String(name.split(separator: "/").last ?? "")] = .missing
+                }
+            }
+        }
+        for id in unique where result[id] == nil { result[id] = .missing }
+        return result
+    }
+
+    /// Your open projects and your areas, for choosing where to-dos go.
+    static func readPlaces(_ connection: Connection) async throws -> [SectisFormat.Place] {
+        let projects = try await readRecords("project", connection)
+        let areas = try await readRecords("area", connection)
+        return SectisFormat.places(projects: projects, areas: areas)
+    }
+
+    // MARK: Tags
+
+    /// Your Sectis tags (decrypted), skipping deleted ones.
+    static func readTags(_ connection: Connection) async throws -> [(id: String, title: String)] {
+        try await readRecords("tag", connection).compactMap { record -> (id: String, title: String)? in
+            guard let id = record["id"] as? String, let title = record["title"] as? String else { return nil }
+            return (id: id, title: title)
+        }
     }
 
     /// The ID of the tag with this title (any capitalization), made if it doesn't exist yet.

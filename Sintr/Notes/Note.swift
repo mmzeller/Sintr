@@ -132,10 +132,13 @@ struct NoteSend: Codable, Hashable, Sendable {
     var date = Date()
     /// A link to what was created there, when the app gives one.
     var link: String?
+    /// Sectis: the IDs of the to-dos this send made (or found already there).
+    var items: [String]?
 
-    init(destination: String, link: String? = nil) {
+    init(destination: String, link: String? = nil, items: [String]? = nil) {
         self.destination = destination
         self.link = link
+        self.items = items
     }
 }
 
@@ -170,6 +173,9 @@ struct Note: Codable, Identifiable, Hashable, Sendable {
     /// This note's "Send to Sectis" switch: whether Enhance sends your action items.
     /// Nil until you change it, so it follows Settings → Integrations → Sectis.
     var sendToSectis: Bool?
+    /// Where in Sectis this note's to-dos go. Nil until you choose, so it follows the note's
+    /// folder (or the Inbox).
+    var sectisPlace: SectisFormat.Place?
 
     init() {}
 
@@ -257,6 +263,7 @@ struct Note: Codable, Identifiable, Hashable, Sendable {
         chat = try c.decodeIfPresent([ChatMessage].self, forKey: .chat) ?? []
         sentTo = try c.decodeIfPresent([NoteSend].self, forKey: .sentTo) ?? []
         sendToSectis = try c.decodeIfPresent(Bool.self, forKey: .sendToSectis)
+        sectisPlace = try? c.decodeIfPresent(SectisFormat.Place.self, forKey: .sectisPlace)
     }
 }
 

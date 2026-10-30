@@ -45,6 +45,10 @@ struct EnhanceSheet: View {
                             Label("Send my action items to Sectis", systemImage: "checklist")
                         }
                         .disabled(isRunning)
+                        if Sectis.isOn(for: store.note(noteID)) {
+                            SectisPlacePicker(noteID: noteID)
+                                .disabled(isRunning)
+                        }
                     } footer: {
                         Text(sectisFooter)
                     }
@@ -173,7 +177,9 @@ struct EnhanceSheet: View {
         if let sent = Sectis.lastSend(of: note) {
             return "Already sent \(sent.date.formatted(date: .abbreviated, time: .shortened)), so Enhance won't send again — use Review & send on the Enhanced tab for anything new."
         }
-        return "Turn off to skip this meeting, or to look the items over first and send them yourself from the Enhanced tab."
+        return Sectis.sendsWaiting
+            ? "Other people's action items go to Sectis's Waiting For. Turn off to skip this meeting, or to look the items over first and send them yourself from the Enhanced tab."
+            : "Turn off to skip this meeting, or to look the items over first and send them yourself from the Enhanced tab."
     }
 
     @ViewBuilder

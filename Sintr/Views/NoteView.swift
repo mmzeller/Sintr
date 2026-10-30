@@ -257,15 +257,24 @@ struct NoteView: View {
     /// to Sectis. (On iPhone it's on the Enhanced tab.)
     @ViewBuilder private var sectisSwitch: some View {
         if sectisReady {
-            Toggle(isOn: Binding(
-                get: { Sectis.isOn(for: store.note(noteID), byDefault: sectisDefault) },
-                set: { value in store.edit(noteID) { $0.sendToSectis = value } })) {
-                Label("Send to Sectis", systemImage: "checklist")
+            HStack(spacing: 10) {
+                Toggle(isOn: Binding(
+                    get: { Sectis.isOn(for: store.note(noteID), byDefault: sectisDefault) },
+                    set: { value in store.edit(noteID) { $0.sendToSectis = value } })) {
+                    Label("Send to Sectis", systemImage: "checklist")
+                }
+                .modifier(OptionToggleStyle())
+                .fixedSize()
+                .help("After Enhance, your action items in this note go to Sectis, and other people's to its Waiting For. Turn off to skip this meeting, or to look them over first — then use Review & send on the Enhanced tab.")
+                // Where they go: the Inbox, or a project or area.
+                if Sectis.isOn(for: store.note(noteID), byDefault: sectisDefault) {
+                    SectisPlacePicker(noteID: noteID, compact: true)
+                        .menuStyle(.button)
+                        .buttonStyle(.borderless)
+                        .fixedSize()
+                }
             }
-            .modifier(OptionToggleStyle())
             .font(.subheadline)
-            .fixedSize()
-            .help("After Enhance, your action items in this note go to your Sectis Inbox. Turn off to skip this meeting, or to look them over first — then use Review & send on the Enhanced tab.")
         }
     }
 
@@ -464,61 +473,6 @@ private struct EnhancedView: View {
         var text = "Enhanced by \(note.enhancedBy)"
         if let date = note.enhancedAt { text += " · " + date.formatted(date: .abbreviated, time: .shortened) }
         return text
-    }
-}
-
-/// The note's Sectis card: on iPhone its Send to Sectis switch; after Enhance, how many action
-/// items are yours, whether they've gone, and Review & send.
-private struct SectisCard: View {
-    let note: Note
-    let byDefault: Bool
-    /// The note has enhanced notes (so there are items to show).
-    let enhanced: Bool
-    @Environment(NoteStore.self) private var store
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            #if os(iOS)
-            Toggle(isOn: Binding(
-                get: { Sectis.isOn(for: store.note(note.id), byDefault: byDefault) },
-                set: { value in store.edit(note.id) { $0.sendToSectis = value } })) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Send to Sectis")
-                    Text("After Enhance, your action items go to your Sectis Inbox.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            #endif
-            if enhanced {
-                #if os(iOS)
-                Divider()
-                #endif
-                let count = Sectis.myItems(in: note).count
-                Label(status(count), systemImage: "checklist")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Button("Review & send…") {
-                    appState.sendRequest = .init(noteID: note.id, kind: .sectis)
-                }
-                .buttonStyle(.bordered)
-                .disabled(count == 0)
-                .help("Pick which action items go to Sectis and adjust them first")
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-
-    private func status(_ count: Int) -> String {
-        guard count > 0 else { return "No action items for you in this note" }
-        let items = "\(count) action item\(count == 1 ? "" : "s") for you"
-        if let sent = Sectis.lastSend(of: note) {
-            return "\(items) · sent to Sectis \(sent.date.formatted(date: .abbreviated, time: .shortened))"
-        }
-        return "\(items) · not sent yet"
     }
 }
 

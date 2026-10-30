@@ -125,6 +125,10 @@ final class AppState {
     /// Picking a place for a shared folder.
     var folderPick: FolderPick?
     var folderError: String?
+    /// Why a sintr:// link couldn't be opened.
+    var linkMessage: String?
+    /// A note made by Sectis's Record in Sintr, waiting for you to say whether to record.
+    var recordPrompt: UUID?
 
     struct SendRequest: Identifiable {
         let id = UUID()

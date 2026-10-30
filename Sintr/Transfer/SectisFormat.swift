@@ -149,19 +149,118 @@ enum SectisFormat {
             .unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(Character.init))
     }
 
-    /// A to-do in Sectis's Inbox, with every field Sectis's own to-dos have.
+    /// Where a to-do goes in Sectis: the Inbox, or one of your projects or areas.
+    struct Place: Codable, Hashable, Sendable {
+        enum Kind: String, Codable, Sendable { case inbox, project, area }
+        var kind: Kind
+        var id: String
+        var title: String
+        /// For a project: the area it's in, if any.
+        var area: String?
+
+        static let inbox = Place(kind: .inbox, id: "", title: "Inbox")
+        var isInbox: Bool { kind == .inbox }
+        /// "Council › Q4 rollout" for a project in an area.
+        var fullTitle: String { area.map { "\($0) › \(title)" } ?? title }
+    }
+
+    /// Someone else's action item, kept in Sectis's Waiting For list: who it's waiting on, the
+    /// day it started waiting, and when to follow up (the to-do comes back to Today then).
+    struct Waiting: Hashable, Sendable {
+        var person: String
+        var since: String
+        var followUp: String?
+    }
+
+    /// A to-do as Sectis stores it, with every field Sectis's own to-dos have: in the Inbox, or
+    /// in a project or area (`place`); with a checklist; or waiting on someone (`waiting`), which
+    /// Sectis files under Anytime and its Waiting list, back in Today on the follow-up date.
     static func todoRecord(id: String, title: String, notes: String, deadline: String?, tags: [String],
-                           order: Double, now: Date) -> [String: Any] {
+                           order: Double, now: Date, place: Place? = nil, checklist: [String] = [],
+                           waiting: Waiting? = nil) -> [String: Any] {
         let ms = Int64(now.timeIntervalSince1970 * 1000)
         let null = NSNull()
-        return [
-            "id": id, "type": "todo", "title": title, "notes": notes, "status": "open", "start": "inbox",
-            "when": null, "evening": false, "deadline": deadline.map { $0 as Any } ?? null, "reminder": null,
-            "projectId": null, "areaId": null, "headingId": null, "tags": tags, "checklist": [Any](),
+        let place = place ?? .inbox
+        // Sectis's own rule: a to-do in a project or area, or waiting on someone, isn't in the Inbox.
+        let start: String = place.isInbox && waiting == nil ? "inbox" : "anytime"
+        let when: Any = waiting?.followUp.map { $0 as Any } ?? null
+        let due: Any = deadline.map { $0 as Any } ?? null
+        let projectID: Any = place.kind == .project ? (place.id as Any) : (null as Any)
+        let areaID: Any = place.kind == .area ? (place.id as Any) : (null as Any)
+        var items: [[String: Any]] = []
+        for (index, text) in checklist.enumerated() {
+            items.append(["id": "\(id)c\(index)", "title": text, "done": false])
+        }
+        var record: [String: Any] = [
+            "id": id, "type": "todo", "title": title, "notes": notes, "status": "open", "start": start,
+            "when": when, "evening": false, "deadline": due, "reminder": null,
+            "projectId": projectID, "areaId": areaID, "headingId": null, "tags": tags, "checklist": items,
             "order": order, "todayOrder": 0, "createdAt": ms, "modifiedAt": ms, "completedAt": null,
             "logged": false, "trashed": false, "isTemplate": false, "repeat": null, "next": null,
-            "templateId": null, "sample": false,
+            "templateId": null, "sample": false, "linkId": null,
         ]
+        if let waiting {
+            record["waitFor"] = waiting.person
+            record["waitSince"] = waiting.since
+        }
+        return record
+    }
+
+    /// What became of a to-do in Sectis, read back from its record.
+    struct TodoState: Hashable, Sendable {
+        enum Status: String, Sendable { case open, done, canceled, trashed, deleted, missing }
+        var id: String
+        var title: String
+        var status: Status
+        var waitingOn: String?
+        var deadline: String?
+        var followUp: String?
+        var projectId: String?
+        var areaId: String?
+
+        var isFinished: Bool { status == .done || status == .canceled }
+        var isGone: Bool { status == .trashed || status == .deleted || status == .missing }
+    }
+
+    static func todoState(id: String, record: [String: Any]?, deleted: Bool = false) -> TodoState {
+        guard let record else { return TodoState(id: id, title: "", status: deleted ? .deleted : .missing) }
+        let text = { (key: String) -> String? in
+            (record[key] as? String).flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
+        }
+        var status = TodoState.Status(rawValue: text("status") ?? "open") ?? .open
+        if record["trashed"] as? Bool == true { status = .trashed }
+        let waiting = status == .open ? text("waitFor") : nil
+        return TodoState(id: id, title: text("title") ?? "", status: status, waitingOn: waiting,
+                         deadline: text("deadline"), followUp: waiting == nil ? nil : text("when"),
+                         projectId: text("projectId"), areaId: text("areaId"))
+    }
+
+    /// Your open projects and your areas, from their records, for picking where to-dos go.
+    /// Projects come after their area, in Sectis's order.
+    static func places(projects: [[String: Any]], areas: [[String: Any]]) -> [Place] {
+        func order(_ record: [String: Any]) -> Double { (record["order"] as? NSNumber)?.doubleValue ?? 0 }
+        func title(_ record: [String: Any], _ fallback: String) -> String {
+            let text = (record["title"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+            return text.isEmpty ? fallback : text
+        }
+        let liveAreas = areas.filter { ($0["id"] as? String) != nil }.sorted { order($0) < order($1) }
+        let areaTitles = Dictionary(liveAreas.map { ($0["id"] as! String, title($0, "New Area")) }, uniquingKeysWith: { a, _ in a })
+        let liveProjects = projects.filter {
+            ($0["id"] as? String) != nil && ($0["status"] as? String ?? "open") == "open"
+                && $0["trashed"] as? Bool != true && $0["isTemplate"] as? Bool != true && $0["blueprint"] as? Bool != true
+        }.sorted { order($0) < order($1) }
+        var result: [Place] = []
+        for area in liveAreas {
+            let id = area["id"] as! String
+            result.append(Place(kind: .area, id: id, title: areaTitles[id] ?? "New Area"))
+            for project in liveProjects where project["areaId"] as? String == id {
+                result.append(Place(kind: .project, id: project["id"] as! String, title: title(project, "New Project"), area: areaTitles[id]))
+            }
+        }
+        for project in liveProjects where (project["areaId"] as? String).flatMap({ areaTitles[$0] }) == nil {
+            result.append(Place(kind: .project, id: project["id"] as! String, title: title(project, "New Project")))
+        }
+        return result
     }
 
     static func tagRecord(id: String, title: String) -> [String: Any] {
@@ -185,6 +284,11 @@ struct ActionItem: Hashable, Sendable {
     var details: [String] = []
     /// The wording it was first read with, when you've changed `title` before sending.
     var originalTitle: String?
+    /// The person it was listed under ("**Dana**", "### Dana", "Dana's next steps"), when the
+    /// heading or label it's under names someone.
+    var groupPerson: String?
+    /// Someone else's item, sent to Sectis's Waiting For: who you're waiting on. Nil for yours.
+    var waitingOn: String?
 
     /// What its Sectis ID is made from: the first wording, so an item you reworded and sent
     /// isn't added a second time.
@@ -245,6 +349,55 @@ enum ActionItemParser {
         return solo
     }
 
+    /// Who an item belongs to when it's someone else's: the owner it names ("Dana", "Dana and
+    /// Sam"), or the person it's listed under. Nil when it's yours, or when nothing says whose
+    /// it is.
+    static func someoneElse(_ item: ActionItem, names: Set<String>) -> String? {
+        if !item.owner.isEmpty {
+            return ownerIncludesMe(item.owner, names: names) ? nil : personName(item.owner)
+        }
+        guard let person = item.groupPerson, !groupIsMe(item.group, names: names),
+              !ownerIncludesMe(person, names: names) else { return nil }
+        return person
+    }
+
+    /// An owner as a name to wait on: "@dana" → "Dana", "Dana's" → "Dana", "Dana (PM)" → "Dana".
+    static func personName(_ owner: String) -> String? {
+        var name = plain(owner).replacing(#/\([^)]*\)/#, with: " ")
+        name = name.trimmingCharacters(in: CharacterSet(charactersIn: " @.:!*_-–—\"'“”"))
+        for suffix in ["'s", "’s"] where name.hasSuffix(suffix) { name = String(name.dropLast(2)) }
+        let words = name.split(whereSeparator: { $0.isWhitespace }).map { word -> String in
+            let text = String(word).trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+            // A lowercase handle like "dana" reads better as "Dana"; "and" stays as it is.
+            guard let first = text.first, first.isLowercase, !["and", "with", "plus", "or"].contains(text) else { return text }
+            return first.uppercased() + text.dropFirst()
+        }.filter { !$0.isEmpty }
+        name = words.joined(separator: " ")
+        guard !name.isEmpty, name.count <= 60, !isMetaWord(name) else { return nil }
+        return name
+    }
+
+    /// The person a heading or label names: "Dana's action items", "Next steps for Dana" — or
+    /// just "Dana" when it's a label of its own ("**Dana**", "Dana:") or a heading inside an
+    /// action-items section. Topic headings ("## Vimeo pricing") don't count.
+    static func personInGroup(_ group: String, isLabel: Bool, inActionSection: Bool) -> String? {
+        var text = plain(group)
+        guard !text.isEmpty else { return nil }
+        let named = isActionHeading(text)
+        if named {
+            text = text.replacing(#/(?i)\b(?:action items?|actions|next steps?|follow[- ]?ups?|to-?dos?|to do list|task list|tasks|assignments)\b/#, with: " ")
+            text = text.replacing(#/(?i)\b(?:for|owner|owners|owned by|assigned to|from)\b/#, with: " ")
+        } else if !(isLabel || inActionSection) {
+            return nil
+        }
+        text = text.trimmingCharacters(in: CharacterSet(charactersIn: " :*_-–—()|"))
+        for suffix in ["'s", "’s"] where text.hasSuffix(suffix) { text = String(text.dropLast(2)) }
+        text = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        guard !text.isEmpty, text.split(separator: " ").count <= 3, looksLikeName(text), !isMetaWord(text),
+              !otherSections.contains(normalize(text)), !selfWords.contains(normalize(text)) else { return nil }
+        return text
+    }
+
     /// A heading or label that names you: "Matthew", "Me", "My tasks", "For me",
     /// "Matthew's action items", "Next steps — Matthew".
     static func groupIsMe(_ group: String, names: Set<String>) -> Bool {
@@ -277,10 +430,13 @@ enum ActionItemParser {
         var result: [ActionItem] = []
         var actionLevel: Int?
         var group = ""
+        /// The group came from a label line of its own ("**Dana**", "Dana:"), not a heading.
+        var groupIsLabel = false
         var lastWasItem = false
 
         func add(_ text: String, _ line: String) {
-            if let item = parse(text, group: group, line: line, names: names, meetingDate: meetingDate, calendar: calendar) {
+            if var item = parse(text, group: group, line: line, names: names, meetingDate: meetingDate, calendar: calendar) {
+                item.groupPerson = personInGroup(group, isLabel: groupIsLabel, inActionSection: actionLevel != nil)
                 result.append(item)
                 lastWasItem = true
             } else {
@@ -305,6 +461,7 @@ enum ActionItemParser {
                     actionLevel = nil
                     group = text
                 }
+                groupIsLabel = false
                 lastWasItem = false
                 continue
             }
@@ -331,6 +488,7 @@ enum ActionItemParser {
             let isBold = line.hasPrefix("**") && line.hasSuffix("**")
             guard isBold || line.hasSuffix(":"), !label.isEmpty, label.count <= 40,
                   label.split(separator: " ").count <= 5 else { continue }
+            groupIsLabel = true
             if isActionHeading(label) {
                 actionLevel = actionLevel ?? 7
                 group = label

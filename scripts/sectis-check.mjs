@@ -40,8 +40,12 @@ async function decryptRec(aes, doc) {
 function newTodoShape() {
   return { id: '', type: 'todo', title: '', notes: '', status: 'open', start: 'inbox', when: null, evening: false, deadline: null, reminder: null,
     projectId: null, areaId: null, headingId: null, tags: [], checklist: [], order: 0, todayOrder: 0, createdAt: 0, modifiedAt: 0,
-    completedAt: null, logged: false, trashed: false, isTemplate: false, repeat: null, next: null, templateId: null, sample: false };
+    completedAt: null, logged: false, trashed: false, isTemplate: false, repeat: null, next: null, templateId: null, sample: false, linkId: null };
 }
+function isInbox(t) { return t.start === 'inbox' && !t.projectId && !t.areaId; }
+function isWaiting(t) { return !!(t && t.type === 'todo' && t.waitFor && t.status === 'open' && !t.trashed && !t.isTemplate); }
+// (from Sectis's notes formatting: what makes a link in a to-do's notes)
+const MD_LINK = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
 // ---- end of Sectis code ----
 
 function fail(message) { console.error('✗ ' + message); process.exit(1); }
@@ -77,7 +81,7 @@ if (mode === 'make') {
   check(rec.id === expected.id && /^sn[0-9a-f]{12}$/.test(rec.id), 'id is the stable Sintr id');
   check(rec.deadline === expected.deadline, 'deadline is a YYYY-MM-DD string');
   check(Array.isArray(rec.tags) && rec.tags[0] === 'tag123', 'tag id is kept');
-  check(rec.start === 'inbox' && rec.status === 'open' && rec.type === 'todo', 'it is an open Inbox to-do');
+  check(rec.start === 'inbox' && rec.status === 'open' && rec.type === 'todo' && isInbox(rec), 'it is an open Inbox to-do');
   const shapeKeys = Object.keys(newTodoShape()).sort().join(',');
   check(Object.keys(rec).sort().join(',') === shapeKeys, 'it has exactly the fields of a Sectis to-do');
   for (const k of ['when', 'reminder', 'projectId', 'areaId', 'headingId', 'completedAt', 'repeat', 'next', 'templateId']) {
@@ -88,6 +92,27 @@ if (mode === 'make') {
   check(Array.isArray(rec.checklist) && rec.checklist.length === 0, 'checklist is an empty list');
   // Sectis's rules: only these keys, and c must be a string under 500,000 characters.
   check(typeof sintr.c === 'string' && sintr.c.length < 500000, 'fits the Firestore rule size limit');
+
+  // Someone else's item: waiting on Dana, in a project, with a checklist and a link back.
+  let w;
+  try { w = await decryptRec(aes, sintr.waiting); } catch (e) { fail('Sectis could not decrypt the waiting to-do: ' + e); }
+  check(w.id === sintr.waiting.id, 'the waiting to-do has its stable id');
+  check(isWaiting(w) && w.waitFor === 'Dana' && w.waitSince === '2026-10-22', 'Sectis files it under Waiting For: waiting on Dana since Oct 22');
+  check(w.when === '2026-10-30' && w.start === 'anytime' && w.deadline === null, 'its follow-up date is its When date (back in Today then), with no deadline of yours');
+  check(w.projectId === 'proj123' && w.areaId === null && w.headingId === null && !isInbox(w), 'it is in the project, not the Inbox');
+  check(w.tags.join() === 'tag123,ptag', 'it has the Meeting tag and the project\'s tags');
+  check(Array.isArray(w.checklist) && w.checklist.length === 2 && w.checklist.every((c) => typeof c.id === 'string' && c.id && c.done === false)
+    && w.checklist.map((c) => c.title).join('|') === 'With the new rates|Copy finance', 'its sub-points are a checklist Sectis can tick');
+  check(new Set(w.checklist.map((c) => c.id)).size === 2, 'checklist items have their own ids');
+  const links = [...w.notes.matchAll(MD_LINK)].map((m) => m[2]);
+  check(links.length === 1 && links[0] === 'sintr://note/B1A2C3D4-0000-4000-8000-000000000001', 'its notes link back to the Sintr note in a way Sectis shows as a link');
+  const waitKeys = Object.keys(newTodoShape()).concat(['waitFor', 'waitSince']).sort().join(',');
+  check(Object.keys(w).sort().join(',') === waitKeys, 'it has exactly the fields of a Sectis to-do, plus waitFor and waitSince');
+
+  let a;
+  try { a = await decryptRec(aes, sintr.area); } catch (e) { fail('Sectis could not decrypt the area to-do: ' + e); }
+  check(a.areaId === 'area9' && a.projectId === null && a.start === 'anytime' && !isInbox(a) && !isWaiting(a), 'a to-do for an area is in that area');
+  check(Object.keys(a).sort().join(',') === shapeKeys, '…with exactly the fields of a Sectis to-do');
 } else if (mode === 'listen') {
   const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'));
   const cloud = JSON.parse(readFileSync(sintrPath, 'utf8')).cloud;
@@ -114,7 +139,7 @@ if (mode === 'make') {
     }, (err) => { clearTimeout(timer); reject(err); });
   }).catch((e) => fail(String(e)));
 
-  check(docs.length === 1 + cloud.ids.length, `Sectis's sync query sees the tag and ${cloud.ids.length} to-dos`);
+  check(docs.length === 1 + cloud.ids.length + 3, `Sectis's sync query sees the tag, ${cloud.ids.length} to-dos, a project, an area and a waiting to-do`);
   const SYNC_KINDS = { todo: 'todos', project: 'projects', heading: 'headings', area: 'areas', tag: 'tags' };
   for (const d of docs) {
     if (!(d.t && typeof d.t.seconds === 'number')) fail(`${d.id}: t should be a server timestamp`);
@@ -133,6 +158,11 @@ if (mode === 'make') {
     check(r.rec.start === 'inbox' && r.rec.status === 'open', '…as an open Inbox to-do');
   });
   check(records[cloud.ids[0]].rec.deadline === '2026-10-23', 'deadline arrives');
+  const waiting = records[cloud.waitingID];
+  check(waiting && waiting.k === 'todo' && isWaiting(waiting.rec) && waiting.rec.waitFor === 'Dana', 'Sectis decrypts the to-do waiting on Dana');
+  check(waiting.rec.projectId === cloud.projectID && records[cloud.projectID]?.k === 'project', '…in the project Sintr read from Sectis');
+  check(waiting.rec.tags.includes(cloud.tagID) && waiting.rec.tags.includes('ptag') && waiting.rec.tags.includes('atag'), '…with the Meeting tag and the project\'s and area\'s tags');
+  check(waiting.rec.checklist.length === 1 && waiting.rec.checklist[0].title === 'With the new rates', '…and its checklist');
   await app.delete();
   process.exit(0);
 } else {

@@ -8,6 +8,17 @@
 	</array>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Sintr records what your Mac plays — like the other side of a call — and transcribes it on this Mac. Nothing is uploaded.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Sintr link</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>sintr</string>
+			</array>
+		</dict>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 </dict>
