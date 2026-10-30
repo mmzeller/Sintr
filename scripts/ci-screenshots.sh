@@ -67,18 +67,24 @@ for MODE in transcript enhanced new; do
 done
 # sintr:// links, the way Sectis opens them (SintrLinks.swift): a note that's here, a new note
 # for a Sectis project (Sintr asks before recording), and a note that isn't on this phone.
+# "prompt" is a real link from outside: iOS asks "Open in Sintr?", which shows the scheme is
+# registered; the others go straight to Sintr's handler (--demo-link), past that question.
 xcrun simctl ui "$UDID" content_size large
 for LINK in "note|sintr://note/5A5A5A5A-0000-4000-8000-000000000001" \
             "new|sintr://new?title=Weekly%20sync&place=project:demoproj1&placeTitle=Q4%20streaming%20upgrade&sectis=https%3A%2F%2Fexample.github.io%2Fsectis%2F" \
             "missing|sintr://note/00000000-0000-4000-8000-0000000000AA"; do
   NAME_PART="${LINK%%|*}"; URL="${LINK#*|}"
   xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null
-  xcrun simctl launch "$UDID" "$BUNDLE" --demo-note card >/dev/null
-  sleep 10
-  xcrun simctl openurl "$UDID" "$URL" || echo "::warning title=Links::openurl failed for $URL"
-  sleep 6
+  xcrun simctl launch "$UDID" "$BUNDLE" --demo-note card --demo-link "$URL" >/dev/null
+  sleep 14
   xcrun simctl io "$UDID" screenshot "shots/link-$NAME_PART.png" >/dev/null
 done
+xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null
+xcrun simctl launch "$UDID" "$BUNDLE" --demo-note card >/dev/null
+sleep 10
+xcrun simctl openurl "$UDID" "sintr://note/5A5A5A5A-0000-4000-8000-000000000001" || echo "::warning title=Links::openurl failed"
+sleep 5
+xcrun simctl io "$UDID" screenshot "shots/link-prompt.png" >/dev/null
 
 ls -la shots
 

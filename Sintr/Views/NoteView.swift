@@ -465,6 +465,7 @@ private struct EnhancedView: View {
                 .padding()
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .defaultScrollAnchor(ScreenshotDemo.scrollsToEnd ? .bottom : .top)
         }
     }
 

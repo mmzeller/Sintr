@@ -22,6 +22,17 @@ enum ScreenshotDemo {
 
     static var isActive: Bool { mode != nil }
 
+    /// `--demo-link sintr://…`: opens that link once the sample note is showing, the way Sectis
+    /// would (the simulator asks "Open in Sintr?" for a real one, which a script can't answer).
+    static let link: URL? = {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: "--demo-link"), index + 1 < arguments.count else { return nil }
+        return URL(string: arguments[index + 1])
+    }()
+
+    /// The Enhanced tab starts scrolled to the end ("sent": so the Sectis card's list shows).
+    static var scrollsToEnd: Bool { mode == "sent" }
+
     /// The tab the sample note opens on, when it isn't the usual one: "empty" is a new note on
     /// the Enhanced tab; "transcript" is the enhanced note on its Transcript tab.
     static var openingTab: NoteView.Tab? {
@@ -59,6 +70,12 @@ enum ScreenshotDemo {
         }
         if mode == "transcript" {
             post.notice = "Transcript rebuilt with speaker labels. \(Platform.isMac ? "Click" : "Tap") a speaker's name to rename them."
+        }
+        if let link {
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                SintrLinks.open(link, store: store, appState: appState)
+            }
         }
     }
 
