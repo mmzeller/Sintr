@@ -60,30 +60,7 @@ struct ContentView: View {
         }
         .task { ScreenshotDemo.open(store: store, appState: appState, post: post) }
         // sintr:// links from Sectis: open a note, or start one (SintrLinks.swift).
-        .onOpenURL { url in SintrLinks.open(url, store: store, appState: appState) }
-        .alert("Can't open that link", isPresented: Binding(
-            get: { appState.linkMessage != nil },
-            set: { if !$0 { appState.linkMessage = nil } }
-        )) {
-            Button("OK") { appState.linkMessage = nil }
-        } message: {
-            Text(appState.linkMessage ?? "")
-        }
-        .alert(recordPromptTitle, isPresented: Binding(
-            get: { appState.recordPrompt != nil },
-            set: { if !$0 { appState.recordPrompt = nil } }
-        )) {
-            Button("Record") {
-                if let id = appState.recordPrompt {
-                    appState.recordPrompt = nil
-                    Task { await recorder.start(noteID: id, store: store) }
-                }
-            }
-            .disabled(recorder.isActive)
-            Button("Not Now", role: .cancel) { appState.recordPrompt = nil }
-        } message: {
-            Text(recordPromptMessage)
-        }
+        .modifier(SintrLinkHandling())
         .onChange(of: appState.folderPick) { _, pick in
             if let pick { activePick = pick }
         }
@@ -196,18 +173,6 @@ struct ContentView: View {
         } message: {
             Text(store.lastError ?? "")
         }
-    }
-
-    private var recordPromptTitle: String {
-        let title = appState.recordPrompt.flatMap { store.note($0)?.displayTitle } ?? "this note"
-        return "Record “\(title)”?"
-    }
-
-    private var recordPromptMessage: String {
-        if recorder.isActive { return "Sintr is already recording another note. Stop that recording first, then press Record in this note." }
-        let place = appState.recordPrompt.flatMap { store.note($0) }.map(Sectis.place(for:))
-        let goes = place.map { $0.isInbox ? "" : " Its action items will go to \($0.title) in Sectis." } ?? ""
-        return "Sectis started this note.\(goes) Sintr starts recording only when you say so."
     }
 }
 

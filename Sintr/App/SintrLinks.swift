@@ -1,4 +1,4 @@
-import Foundation
+import SwiftUI
 
 /// sintr:// links. Sectis puts them on the to-dos Sintr sends it, and in its menus:
 ///
@@ -72,5 +72,59 @@ enum SintrLinks {
         case .folder(let shown): if folder != shown { appState.folderFilter = .all }
         }
         appState.selection = id
+    }
+}
+
+/// Opens sintr:// links, says when one can't be opened, and asks before recording a note
+/// that Sectis's Record in Sintr started.
+struct SintrLinkHandling: ViewModifier {
+    @Environment(NoteStore.self) private var store
+    @Environment(Recorder.self) private var recorder
+    @Environment(AppState.self) private var appState
+
+    func body(content: Content) -> some View {
+        content
+            .onOpenURL { url in SintrLinks.open(url, store: store, appState: appState) }
+            .alert("Can't open that link", isPresented: Binding(
+                get: { appState.linkMessage != nil },
+                set: { if !$0 { appState.linkMessage = nil } }
+            )) {
+                Button("OK") { appState.linkMessage = nil }
+            } message: {
+                Text(appState.linkMessage ?? "")
+            }
+            .alert(promptTitle, isPresented: Binding(
+                get: { appState.recordPrompt != nil },
+                set: { if !$0 { appState.recordPrompt = nil } }
+            )) {
+                Button("Record") { record() }
+                    .disabled(recorder.isActive)
+                Button("Not Now", role: .cancel) { appState.recordPrompt = nil }
+            } message: {
+                Text(promptMessage)
+            }
+    }
+
+    private func record() {
+        guard let id = appState.recordPrompt else { return }
+        appState.recordPrompt = nil
+        Task { await recorder.start(noteID: id, store: store) }
+    }
+
+    private var promptTitle: String {
+        let title = appState.recordPrompt.flatMap { store.note($0)?.displayTitle } ?? "this note"
+        return "Record “\(title)”?"
+    }
+
+    private var promptMessage: String {
+        if recorder.isActive {
+            return "Sintr is already recording another note. Stop that recording first, then press Record in this note."
+        }
+        var text = "Sectis started this note."
+        if let id = appState.recordPrompt, let note = store.note(id) {
+            let place = Sectis.place(for: note)
+            if !place.isInbox { text += " Its action items will go to \(place.title) in Sectis." }
+        }
+        return text + " Sintr starts recording only when you say so."
     }
 }
