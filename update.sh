@@ -18,6 +18,17 @@ git checkout -- "$PROJECT" 2>/dev/null || true
 # Xcode also rewrites the list of package versions; let the update replace it.
 git checkout -- Sintr.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved 2>/dev/null || true
 
+# Anything else changed here (Xcode sometimes rewrites Sintr-Info.plist) is set aside, not
+# lost, so the update can apply: "git stash list" shows it, "git stash pop" brings it back.
+CHANGED=$(git diff --name-only HEAD 2>/dev/null)
+if [ -n "$CHANGED" ]; then
+  if git stash push -q -m "Set aside by update.sh on $(date '+%Y-%m-%d %H:%M')"; then
+    printf "\n%s\n" "Set aside changes made in this folder, so the update can apply:"
+    printf "  %s\n" $CHANGED
+    echo "They're kept: git stash list shows them, and git stash pop brings them back."
+  fi
+fi
+
 printf "\n\033[1m%s\033[0m\n" "Getting the latest Sintr…"
 if ! git pull --ff-only; then
   printf "\n\033[1;31m%s\033[0m\n" "Couldn't update. If you changed files in this folder, run:  git stash   then try again."
