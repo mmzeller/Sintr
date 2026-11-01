@@ -25,6 +25,11 @@ final class VoiceLibrary {
 
     var isOn: Bool { AppSettings.shouldRecognizeVoices }
 
+    /// For the automated screenshots: voices to show, never saved.
+    func showDemo(_ demo: [KnownVoice]) {
+        voices = Self.sorted(demo)
+    }
+
     func voice(_ id: UUID?) -> KnownVoice? {
         guard let id else { return nil }
         return voices.first { $0.id == id }

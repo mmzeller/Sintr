@@ -87,6 +87,13 @@ struct TranscriptView: View {
         .sheet(item: $renaming) { ref in
             SpeakerNameSheet(noteID: noteID, label: ref.id)
         }
+        .task {
+            // The automated screenshots of the naming sheet ("voice-sheet").
+            if let label = ScreenshotDemo.speakerSheet, renaming == nil {
+                try? await Task.sleep(for: .seconds(1))
+                renaming = SpeakerRef(id: label)
+            }
+        }
         .alert("Download speaker detection?", isPresented: $askDownload) {
             Button("Download") { downloadThenIdentify() }
             Button("Cancel", role: .cancel) {}

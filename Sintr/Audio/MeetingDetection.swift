@@ -131,6 +131,25 @@ struct MeetingDetection: Sendable {
     }
 }
 
+/// A recording of a call that's about to stop by itself, and why.
+enum StopCountdown: Equatable, Sendable {
+    /// The call ended with goodbyes.
+    case goodbye(stopAt: Date)
+    /// No call, and nothing heard for a long time.
+    case quiet(stopAt: Date)
+
+    var stopAt: Date {
+        switch self {
+        case .goodbye(let date), .quiet(let date): date
+        }
+    }
+
+    var isGoodbye: Bool {
+        if case .goodbye = self { return true }
+        return false
+    }
+}
+
 /// When a recording of a call offers to stop by itself. Leaving the call isn't enough on its
 /// own — you might rejoin, or keep talking in the room — so it offers to stop when the last
 /// words sound like goodbyes, or after a long quiet stretch with no call. Either way there's a

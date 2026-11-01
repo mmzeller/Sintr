@@ -109,6 +109,13 @@ jobs:
       - name: Check voice recognition, hiding names from Claude, and meeting detection
         run: bash scripts/ci-logic-check.sh
 
+      - name: Draw the meeting panel (temporary)
+        run: |
+          swiftc -Onone -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+            Sintr/Audio/MeetingDetection.swift Sintr/Audio/MeetingPromptView.swift scripts/panel-preview.swift \
+            -o "$RUNNER_TEMP/panel-preview"
+          "$RUNNER_TEMP/panel-preview"
+
   sectis:
     name: Sectis format
     runs-on: macos-15

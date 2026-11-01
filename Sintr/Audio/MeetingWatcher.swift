@@ -10,22 +10,10 @@ import SwiftUI
 @MainActor
 @Observable
 final class MeetingWatcher {
-    /// Why a recording is about to stop by itself.
-    enum Ending: Equatable {
-        case goodbye(stopAt: Date)
-        case quiet(stopAt: Date)
-
-        var stopAt: Date {
-            switch self {
-            case .goodbye(let date), .quiet(let date): date
-            }
-        }
-    }
-
     /// The call to offer notes for.
     private(set) var offer: CallApp?
     /// A countdown to stopping the recording.
-    private(set) var ending: Ending?
+    private(set) var ending: StopCountdown?
     /// The call the current recording belongs to.
     private(set) var recordingCall: CallApp?
 
@@ -107,7 +95,7 @@ final class MeetingWatcher {
     }
 
     func keepRecording() {
-        if case .goodbye = ending { keptAfterGoodbye = true }
+        if ending?.isGoodbye == true { keptAfterGoodbye = true }
         quietFrom = Date()
         ending = nil
         updatePanel()
@@ -174,7 +162,7 @@ final class MeetingWatcher {
               now.timeIntervalSince(started) >= CallEnding.minimumRecording else { return }
         if let ending {
             if now >= ending.stopAt {
-                if case .goodbye = ending {
+                if ending.isGoodbye {
                     ActivityLog.add("Meeting detection: the call ended with goodbyes; stopped recording")
                 } else {
                     ActivityLog.add("Meeting detection: no call and nothing heard for \(Int(CallEnding.quietLimit / 60)) minutes; stopped recording")
@@ -207,7 +195,7 @@ final class MeetingWatcher {
     private func updatePanel() {
         let showing = offer != nil || ending != nil
         if showing {
-            if panel == nil { panel = MeetingPanel(content: AnyView(MeetingPromptView(watcher: self))) }
+            if panel == nil { panel = MeetingPanel(content: AnyView(MeetingPanelContent(watcher: self))) }
             panel?.present()
         } else {
             panel?.orderOut(nil)
@@ -263,93 +251,20 @@ final class MeetingPanel: NSPanel {
     }
 }
 
-/// What the panel says: "Zoom call — take notes?", or "Stopping in 12 s".
-struct MeetingPromptView: View {
+/// The panel's content, kept up to date with the watcher.
+struct MeetingPanelContent: View {
     let watcher: MeetingWatcher
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let ending = watcher.ending {
-                endingContent(ending)
-            } else if let app = watcher.offer {
-                offerContent(app)
-            }
-        }
-        .padding(14)
-        .frame(width: 340, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    @ViewBuilder private func offerContent(_ app: CallApp) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            appIcon(app)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(app.title).font(.headline)
-                Text("Take notes with Sintr? It records your microphone and the call, and transcribes on this Mac.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        HStack(spacing: 8) {
-            Button {
-                watcher.takeNotes(app)
-            } label: {
-                Label("Take notes", systemImage: "record.circle")
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
-            Button("Not now") { watcher.notNow(app) }
-            Spacer(minLength: 0)
-            Button("Never for \(app.name)") { watcher.neverOffer(for: app) }
-                .buttonStyle(.borderless)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .controlSize(.regular)
-    }
-
-    @ViewBuilder private func endingContent(_ ending: MeetingWatcher.Ending) -> some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let left = max(0, Int(ending.stopAt.timeIntervalSince(context.date).rounded(.up)))
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "stop.circle")
-                        .font(.title2)
-                        .foregroundStyle(.red)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(isGoodbye(ending) ? "The call has ended" : "Nothing heard for \(Int(CallEnding.quietLimit / 60)) minutes")
-                            .font(.headline)
-                        Text("Sintr stops recording in \(left) s. Your notes and transcript are kept.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                HStack(spacing: 8) {
-                    Button("Keep recording") { watcher.keepRecording() }
-                        .buttonStyle(.borderedProminent)
-                    Button("Stop now") { watcher.stopNow() }
-                    Spacer(minLength: 0)
-                }
-            }
-        }
-    }
-
-    private func isGoodbye(_ ending: MeetingWatcher.Ending) -> Bool {
-        if case .goodbye = ending { return true }
-        return false
-    }
-
-    @ViewBuilder private func appIcon(_ app: CallApp) -> some View {
-        if let icon = MeetingApps.icon(for: app.bundleID) {
-            Image(nsImage: icon).resizable().frame(width: 32, height: 32)
-        } else {
-            Image(systemName: "phone.circle.fill").font(.largeTitle).foregroundStyle(.green)
-        }
+        MeetingPromptView(
+            offer: watcher.offer,
+            ending: watcher.ending,
+            icon: watcher.offer.flatMap { MeetingApps.icon(for: $0.bundleID) },
+            takeNotes: { if let app = watcher.offer { watcher.takeNotes(app) } },
+            notNow: { if let app = watcher.offer { watcher.notNow(app) } },
+            neverOffer: { if let app = watcher.offer { watcher.neverOffer(for: app) } },
+            keepRecording: { watcher.keepRecording() },
+            stopNow: { watcher.stopNow() })
     }
 }
 #endif

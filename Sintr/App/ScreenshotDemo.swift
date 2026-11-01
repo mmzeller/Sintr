@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 /// For the automated screenshots (scripts/ci-screenshots.sh): launching with
-/// `--demo-note enhanced|new|review|card|sent|empty|transcript` opens a sample note, so the note screen
+/// `--demo-note enhanced|new|review|card|sent|empty|transcript|voices|voice-sheet` opens a sample note, so the note screen
 /// can be checked at different text sizes without a phone. `--demo-width 320` also lays the app
 /// out 320 points wide — an iPhone with Display Zoom set to Larger Text — with red lines at the
 /// edges, so anything wider than that screen shows past them. Does nothing without these.
@@ -38,10 +38,13 @@ enum ScreenshotDemo {
     static var openingTab: NoteView.Tab? {
         switch mode ?? "" {
         case "empty": return .enhanced
-        case "transcript": return .transcript
+        case "transcript", "voices", "voice-sheet": return .transcript
         default: return nil
         }
     }
+
+    /// "voice-sheet": the speaker whose naming sheet opens by itself.
+    static var speakerSheet: String? { mode == "voice-sheet" ? "Speaker 2" : nil }
 
     /// Before the first screen: skip the recording setup sheet.
     static func prepare() {
@@ -60,8 +63,10 @@ enum ScreenshotDemo {
         case "card": note = shortNote
         case "sent": note = sentNote
         case "transcript": note = transcriptNote
+        case "voices", "voice-sheet": note = voicesNote
         default: note = enhancedNote
         }
+        if mode == "voices" || mode == "voice-sheet" { VoiceLibrary.shared.showDemo(demoVoices) }
         addRecordingFiles(of: note, to: store)
         _ = store.merge([note])
         appState.selection = note.id
@@ -106,6 +111,30 @@ enum ScreenshotDemo {
         note.speakerNames = ["Speaker 1": "Me"]
         note.duration = 48
         note.recordings = [NoteRecording(fileName: "demo.m4a", speaker: "", offset: 0)]
+        return note
+    }
+
+    /// Voices Sintr "remembers" for the voices demos (never saved).
+    private static let demoVoices: [KnownVoice] = {
+        func voice(_ name: String, _ id: String, _ axis: Int) -> KnownVoice {
+            var print = [Float](repeating: 0.01, count: 16)
+            print[axis] = 1
+            var voice = KnownVoice(name: name, samples: [VoiceSample(print: print, confirmed: true)])
+            voice.id = UUID(uuidString: id)!
+            return voice
+        }
+        return [voice("Me", "5A5A5A5A-0000-4000-8000-0000000000E1", 0),
+                voice("Dana", "5A5A5A5A-0000-4000-8000-0000000000E2", 1),
+                voice("Sam", "5A5A5A5A-0000-4000-8000-0000000000E3", 2)]
+    }()
+
+    /// The transcript note in person, with both voices recognized from earlier notes.
+    private static var voicesNote: Note {
+        var note = transcriptNote
+        note.id = UUID(uuidString: "5A5A5A5A-0000-4000-8000-000000000006")!
+        note.speakerNames = ["Speaker 1": "Me", "Speaker 2": "Dana"]
+        note.recognizedVoices = ["Speaker 1": demoVoices[0].id, "Speaker 2": demoVoices[1].id]
+        note.voicePrints = ["Speaker 1": demoVoices[0].samples[0].print, "Speaker 2": demoVoices[1].samples[0].print]
         return note
     }
 

@@ -41,9 +41,10 @@ done
 
 # Sample notes (see ScreenshotDemo.swift): enhanced, new, Review & send for Sectis, a short
 # enhanced note showing the Sectis card, one whose to-dos went to Sectis (the card lists them),
-# an empty Enhanced tab, and the Transcript tab with detected speakers and the "Transcript
-# rebuilt" message.
-for MODE in enhanced new review card sent empty transcript; do
+# an empty Enhanced tab, the Transcript tab with detected speakers and the "Transcript
+# rebuilt" message, the same with voices recognized from earlier notes, and the sheet for
+# naming a speaker.
+for MODE in enhanced new review card sent empty transcript voices voice-sheet; do
   for SIZE in large extra-extra-extra-large accessibility-medium; do
     xcrun simctl ui "$UDID" content_size "$SIZE"
     xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null
