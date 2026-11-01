@@ -20,8 +20,12 @@ struct NoteView: View {
     @State private var sectisDefault = false
     /// Editing the enhanced notes' Markdown (Edit/Done in the toolbar).
     @State private var editingEnhanced = false
+    /// You're typing in the note itself (My notes, or editing the enhanced notes).
+    @FocusState private var bodyFocused: Bool
     #if os(iOS)
     @FocusState private var titleFocused: Bool
+    /// The on-screen keyboard is showing (for any field — the title, Ask…).
+    @State private var keyboardUp = false
     #endif
 
     enum Tab: String, CaseIterable, Identifiable {
@@ -81,7 +85,174 @@ struct NoteView: View {
     }
     #endif
 
+    /// iPhone, typing in the note: the title, date and tabs step aside so the words get the
+    /// space between the toolbar and the keyboard. They come back when the keyboard goes.
+    private var typingInNote: Bool {
+        #if os(iOS)
+        bodyFocused
+        #else
+        false
+        #endif
+    }
+
+    /// iPhone, the keyboard is up: the Record bar steps aside too (a one-line strip stays if
+    /// something is being recorded).
+    private var keyboardShowing: Bool {
+        #if os(iOS)
+        keyboardUp || bodyFocused
+        #else
+        false
+        #endif
+    }
+
     var body: some View {
+        VStack(spacing: 0) {
+            if !typingInNote {
+                header
+            }
+
+            Divider()
+
+            switch tab {
+            case .myNotes:
+                MyNotesEditor(text: binding(\.myNotes), focused: $bodyFocused)
+            case .transcript:
+                TranscriptView(noteID: noteID)
+            case .enhanced:
+                EnhancedView(noteID: noteID, editing: $editingEnhanced, focused: $bodyFocused,
+                             sectisReady: sectisReady, sectisDefault: sectisDefault)
+            case .ask:
+                AskView(scope: .note(noteID))
+            case .translations:
+                TranslationsView(noteID: noteID)
+            }
+        }
+        .animation(.snappy(duration: 0.25), value: typingInNote)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if keyboardShowing {
+                // Typing: only a slim strip, and only while something's being recorded.
+                if recorder.isActive {
+                    RecordingStrip(noteID: noteID)
+                }
+            } else if !editingEnhanced || recorder.isActive {
+                // Out of the way while you edit the enhanced notes — unless you're recording.
+                RecordBar(noteID: noteID)
+            }
+        }
+        #if os(iOS)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            withAnimation(.snappy(duration: 0.25)) { keyboardUp = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            withAnimation(.snappy(duration: 0.25)) { keyboardUp = false }
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .toolbar {
+            #if os(iOS)
+            if bodyFocused, tab == .myNotes {
+                // Typing in My notes: Done puts the keyboard away (and the title, tabs and
+                // Record button come back).
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { bodyFocused = false }
+                        .fontWeight(.semibold)
+                }
+            }
+            #endif
+            if tab == .enhanced, !note.enhanced.isEmpty {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(editingEnhanced ? "Done" : "Edit") { editingEnhanced.toggle() }
+                        .fontWeight(editingEnhanced ? .semibold : .regular)
+                        .help(editingEnhanced ? "Finish editing" : "Edit the enhanced notes")
+                }
+            }
+            // Out of the way while you type: Done is all you need then.
+            if !typingInNote {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button {
+                        editingEnhanced = false
+                        appState.enhanceNoteID = noteID
+                    } label: {
+                        Label("Enhance", systemImage: "sparkles")
+                    }
+                    .help(note.enhanced.isEmpty ? "Turn your notes and the transcript into clean notes" : "Enhance again")
+                    .disabled(recorder.noteID == noteID)
+
+                    Button {
+                        appState.translateNoteID = noteID
+                    } label: {
+                        Label("Translate", systemImage: "translate")
+                    }
+                    .help("Translate this note into another language")
+                    .disabled(recorder.noteID == noteID || (note.enhanced.isEmpty && note.transcript.isEmpty && note.myNotes.isEmpty))
+
+                    Menu {
+                        Button("Export…", systemImage: "square.and.arrow.up") {
+                            appState.exportRequest = .init(noteID: noteID)
+                        }
+                        if !note.enhanced.isEmpty {
+                            Button("Copy enhanced notes", systemImage: "doc.on.doc") {
+                                Clipboard.copy(note.enhanced)
+                            }
+                        }
+                        Button("Copy as Markdown", systemImage: "doc.plaintext") {
+                            Clipboard.copy(Exporter.markdown(note))
+                        }
+                        Menu("Send to", systemImage: "paperplane") {
+                            ForEach(IntegrationKind.allCases) { kind in
+                                Button(kind.title + (IntegrationSettings.isConfigured(kind) ? "" : " (set up in Settings)"),
+                                       systemImage: kind.systemImage) {
+                                    appState.sendRequest = .init(noteID: noteID, kind: kind)
+                                }
+                                .disabled(!IntegrationSettings.isConfigured(kind))
+                            }
+                        }
+                        if !note.recordings.isEmpty {
+                            Divider()
+                            Button("Delete recording (keep text)", systemImage: "waveform.slash", role: .destructive) {
+                                confirmDeleteAudio = true
+                            }
+                            .disabled(recorder.noteID == noteID || post.isBusy(with: noteID))
+                        }
+                    } label: {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }
+                }
+            }
+        }
+        .confirmationDialog("Delete this note's audio?", isPresented: $confirmDeleteAudio, titleVisibility: .visible) {
+            Button("Delete audio", role: .destructive) { store.deleteRecordings(of: noteID) }
+        } message: {
+            Text("Your notes and transcript stay. Without the audio you can't re-transcribe it later.")
+        }
+        .onAppear {
+            if let demoTab = ScreenshotDemo.openingTab {
+                tab = demoTab
+            } else if initialTab == nil, recorder.noteID != noteID, !note.enhanced.isEmpty {
+                tab = .enhanced
+            }
+            refreshSectis()
+            if ScreenshotDemo.startsTyping {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { bodyFocused = true }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .sintrIntegrationsChanged)) { _ in
+            refreshSectis()
+        }
+        .onChange(of: tab) { _, newTab in
+            if newTab != .enhanced { editingEnhanced = false }
+        }
+        .onChange(of: note.enhancedAt) { _, newValue in
+            if newValue != nil { tab = .enhanced }
+        }
+        .onChange(of: note.translations.count) { old, new in
+            if new > old { tab = .translations }
+            if new == 0 && tab == .translations { tab = .enhanced }
+        }
+    }
+
+    /// The title, date and tabs.
+    @ViewBuilder private var header: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 #if os(macOS)
@@ -133,117 +304,8 @@ struct NoteView: View {
                 .padding(.top, 10)
                 .padding(.bottom, 8)
             #endif
-
-            Divider()
-
-            switch tab {
-            case .myNotes:
-                MyNotesEditor(text: binding(\.myNotes))
-            case .transcript:
-                TranscriptView(noteID: noteID)
-            case .enhanced:
-                EnhancedView(noteID: noteID, editing: $editingEnhanced,
-                             sectisReady: sectisReady, sectisDefault: sectisDefault)
-            case .ask:
-                AskView(scope: .note(noteID))
-            case .translations:
-                TranslationsView(noteID: noteID)
-            }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            // Out of the way while you edit the enhanced notes — unless you're recording.
-            if !editingEnhanced || recorder.isActive {
-                RecordBar(noteID: noteID)
-            }
-        }
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
-        .toolbar {
-            if tab == .enhanced, !note.enhanced.isEmpty {
-                ToolbarItem(placement: .primaryAction) {
-                    Button(editingEnhanced ? "Done" : "Edit") { editingEnhanced.toggle() }
-                        .fontWeight(editingEnhanced ? .semibold : .regular)
-                        .help(editingEnhanced ? "Finish editing" : "Edit the enhanced notes")
-                }
-            }
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    editingEnhanced = false
-                    appState.enhanceNoteID = noteID
-                } label: {
-                    Label("Enhance", systemImage: "sparkles")
-                }
-                .help(note.enhanced.isEmpty ? "Turn your notes and the transcript into clean notes" : "Enhance again")
-                .disabled(recorder.noteID == noteID)
-
-                Button {
-                    appState.translateNoteID = noteID
-                } label: {
-                    Label("Translate", systemImage: "translate")
-                }
-                .help("Translate this note into another language")
-                .disabled(recorder.noteID == noteID || (note.enhanced.isEmpty && note.transcript.isEmpty && note.myNotes.isEmpty))
-
-                Menu {
-                    Button("Export…", systemImage: "square.and.arrow.up") {
-                        appState.exportRequest = .init(noteID: noteID)
-                    }
-                    if !note.enhanced.isEmpty {
-                        Button("Copy enhanced notes", systemImage: "doc.on.doc") {
-                            Clipboard.copy(note.enhanced)
-                        }
-                    }
-                    Button("Copy as Markdown", systemImage: "doc.plaintext") {
-                        Clipboard.copy(Exporter.markdown(note))
-                    }
-                    Menu("Send to", systemImage: "paperplane") {
-                        ForEach(IntegrationKind.allCases) { kind in
-                            Button(kind.title + (IntegrationSettings.isConfigured(kind) ? "" : " (set up in Settings)"),
-                                   systemImage: kind.systemImage) {
-                                appState.sendRequest = .init(noteID: noteID, kind: kind)
-                            }
-                            .disabled(!IntegrationSettings.isConfigured(kind))
-                        }
-                    }
-                    if !note.recordings.isEmpty {
-                        Divider()
-                        Button("Delete recording (keep text)", systemImage: "waveform.slash", role: .destructive) {
-                            confirmDeleteAudio = true
-                        }
-                        .disabled(recorder.noteID == noteID || post.isBusy(with: noteID))
-                    }
-                } label: {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                }
-            }
-        }
-        .confirmationDialog("Delete this note's audio?", isPresented: $confirmDeleteAudio, titleVisibility: .visible) {
-            Button("Delete audio", role: .destructive) { store.deleteRecordings(of: noteID) }
-        } message: {
-            Text("Your notes and transcript stay. Without the audio you can't re-transcribe it later.")
-        }
-        .onAppear {
-            if let demoTab = ScreenshotDemo.openingTab {
-                tab = demoTab
-            } else if initialTab == nil, recorder.noteID != noteID, !note.enhanced.isEmpty {
-                tab = .enhanced
-            }
-            refreshSectis()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .sintrIntegrationsChanged)) { _ in
-            refreshSectis()
-        }
-        .onChange(of: tab) { _, newTab in
-            if newTab != .enhanced { editingEnhanced = false }
-        }
-        .onChange(of: note.enhancedAt) { _, newValue in
-            if newValue != nil { tab = .enhanced }
-        }
-        .onChange(of: note.translations.count) { old, new in
-            if new > old { tab = .translations }
-            if new == 0 && tab == .translations { tab = .enhanced }
-        }
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 
     private var subtitleText: some View {
@@ -372,12 +434,15 @@ struct NoteTabBar: View {
 
 private struct MyNotesEditor: View {
     @Binding var text: String
+    var focused: FocusState<Bool>.Binding
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             TextEditor(text: $text)
                 .font(.body)
                 .scrollContentBackground(.hidden)
+                .focused(focused)
+                .scrollDismissesKeyboard(.interactively)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
             if text.isEmpty {
@@ -398,6 +463,7 @@ private struct MyNotesEditor: View {
 private struct EnhancedView: View {
     let noteID: UUID
     @Binding var editing: Bool
+    var focused: FocusState<Bool>.Binding
     let sectisReady: Bool
     let sectisDefault: Bool
     @Environment(NoteStore.self) private var store
@@ -448,6 +514,8 @@ private struct EnhancedView: View {
                 set: { value in store.edit(noteID) { $0.enhanced = value } }))
                 .font(.body.monospaced())
                 .scrollContentBackground(.hidden)
+                .focused(focused)
+                .scrollDismissesKeyboard(.interactively)
                 .padding(8)
         } else {
             ScrollView {

@@ -594,3 +594,51 @@ struct MeetingAudioPicker: View {
     }
 }
 #endif
+
+/// While you type on the iPhone, in place of the Record bar: one slim line that says something
+/// is being recorded, with Stop — so the keyboard and your words get the screen.
+struct RecordingStrip: View {
+    let noteID: UUID
+    @Environment(NoteStore.self) private var store
+    @Environment(Recorder.self) private var recorder
+
+    var body: some View {
+        HStack(spacing: 10) {
+            switch recorder.phase {
+            case .recording:
+                Image(systemName: "record.circle.fill")
+                    .foregroundStyle(.red)
+                    .symbolEffect(.pulse)
+                if let started = recorder.startedAt {
+                    TimelineView(.periodic(from: started, by: 1)) { context in
+                        Text(Note.clock(context.date.timeIntervalSince(started)))
+                            .monospacedDigit()
+                    }
+                }
+                Text(recorder.noteID == noteID ? "Recording" : "Recording “\(store.note(recorder.noteID)?.displayTitle ?? "another note")”")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Button {
+                    Task { await recorder.stop() }
+                } label: {
+                    Label("Stop", systemImage: "stop.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            case .preparing(let message), .finishing(let message):
+                ProgressView().controlSize(.small)
+                Text(message).lineLimit(1)
+                Spacer(minLength: 0)
+            case .idle:
+                EmptyView()
+            }
+        }
+        .font(.callout)
+        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+        .padding(.horizontal)
+        .padding(.vertical, 6)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
+    }
+}

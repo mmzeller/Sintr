@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 /// For the automated screenshots (scripts/ci-screenshots.sh): launching with
-/// `--demo-note enhanced|new|review|card|sent|empty|transcript|voices|voice-sheet` opens a sample note, so the note screen
+/// `--demo-note enhanced|new|review|card|sent|empty|transcript|voices|voice-sheet|typing` opens a sample note, so the note screen
 /// can be checked at different text sizes without a phone. `--demo-width 320` also lays the app
 /// out 320 points wide — an iPhone with Display Zoom set to Larger Text — with red lines at the
 /// edges, so anything wider than that screen shows past them. Does nothing without these.
@@ -38,10 +38,14 @@ enum ScreenshotDemo {
     static var openingTab: NoteView.Tab? {
         switch mode ?? "" {
         case "empty": return .enhanced
+        case "typing": return .myNotes
         case "transcript", "voices", "voice-sheet": return .transcript
         default: return nil
         }
     }
+
+    /// "typing": the cursor goes into My notes, so the keyboard shows.
+    static var startsTyping: Bool { mode == "typing" }
 
     /// "voice-sheet": the speaker whose naming sheet opens by itself.
     static var speakerSheet: String? { mode == "voice-sheet" ? "Speaker 2" : nil }
@@ -64,6 +68,7 @@ enum ScreenshotDemo {
         case "sent": note = sentNote
         case "transcript": note = transcriptNote
         case "voices", "voice-sheet": note = voicesNote
+        case "typing": note = typingNote
         default: note = enhancedNote
         }
         if mode == "voices" || mode == "voice-sheet" { VoiceLibrary.shared.showDemo(demoVoices) }
@@ -111,6 +116,20 @@ enum ScreenshotDemo {
         note.speakerNames = ["Speaker 1": "Me"]
         note.duration = 48
         note.recordings = [NoteRecording(fileName: "demo.m4a", speaker: "", offset: 0)]
+        return note
+    }
+
+    /// A note being typed on the phone, with no recording.
+    private static var typingNote: Note {
+        var note = Note()
+        note.id = UUID(uuidString: "5A5A5A5A-0000-4000-8000-000000000007")!
+        note.title = "Budget check-in"
+        note.myNotes = """
+            Vimeo renewal — ask about the Enterprise price
+            Pearl firmware before Tuesday
+            Dana: attendance numbers by Friday
+            Q-SYS preset for council
+            """
         return note
     }
 

@@ -26,6 +26,8 @@ APP=build/sim/Build/Products/Debug-iphonesimulator/Sintr.app
 [ -d "$APP" ] || { echo "::error title=Screenshots::The simulator build failed"; exit 1; }
 BUNDLE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist")
 
+# The on-screen keyboard, as on a phone (the "typing" screenshots show it).
+defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false 2>/dev/null || true
 xcrun simctl boot "$UDID" 2>/dev/null
 xcrun simctl bootstatus "$UDID" -b >/dev/null
 xcrun simctl status_bar "$UDID" override --time "9:41" --batteryLevel 100 --cellularBars 4 2>/dev/null
@@ -42,9 +44,9 @@ done
 # Sample notes (see ScreenshotDemo.swift): enhanced, new, Review & send for Sectis, a short
 # enhanced note showing the Sectis card, one whose to-dos went to Sectis (the card lists them),
 # an empty Enhanced tab, the Transcript tab with detected speakers and the "Transcript
-# rebuilt" message, the same with voices recognized from earlier notes, and the sheet for
-# naming a speaker.
-for MODE in enhanced new review card sent empty transcript voices voice-sheet; do
+# rebuilt" message, the same with voices recognized from earlier notes, the sheet for
+# naming a speaker, and typing in My notes with the keyboard up.
+for MODE in enhanced new review card sent empty transcript voices voice-sheet typing; do
   for SIZE in large extra-extra-extra-large accessibility-medium; do
     xcrun simctl ui "$UDID" content_size "$SIZE"
     xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null

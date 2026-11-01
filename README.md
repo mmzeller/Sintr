@@ -163,6 +163,7 @@ A misheard spelling of someone you've named (“Dayna Whitfield” for Dana Whit
 - **On calls, wear headphones** if you can. Without them your Mac's microphone also hears the other person through the speakers. **Remove echo** (Settings → Recording, on by default) drops most of those duplicates, but headphones are cleanest.
 - Live meters keep the microphone open, so macOS shows its orange microphone indicator while Sintr is open. Nothing is saved or transcribed until you press Record. Turn them off in Settings → Recording if you prefer.
 - Type only the key points in **My notes**; Enhance fills in the rest from the transcript and keeps your points first.
+- **Typing on the iPhone:** once the keyboard is up, the title, tabs and Record button step aside so your notes get the screen between the toolbar and the keyboard (if something is recording, a one-line strip with Stop stays). Tap **Done** at the top, or swipe down on the notes, to put the keyboard away and bring them back.
 - The first Enhance with the phone model loads it into memory and takes a little longer.
 
 ## Portable version (thumb drive or any folder)
