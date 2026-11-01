@@ -7,9 +7,12 @@ Private meeting notes for iPhone and Mac, in the spirit of Granola — but every
 - **Live input meters:** on the Mac, the microphone and call-audio meters run all the time (not just while recording), so you can check what Sintr hears before you press Record.
 - **Echo removal:** without headphones your microphone also hears the call; Sintr drops those duplicate “Me” lines as you record, and again more precisely afterwards.
 - **Detect speakers:** after you stop, voices are labeled — Me/Them (or Them 1, Them 2…) on calls, Speaker 1, Speaker 2… in person. Click a name to rename a speaker.
+- **Remembers voices:** name a speaker once — yourself as “Me”, a colleague by name — and Sintr puts that name on the voice in later recordings, on this device only. In person, that's how Sintr knows which voice is you, so your action items go to Sectis as yours.
+- **Notices calls (Mac):** when Zoom, Teams, FaceTime, Webex, Slack or a call in your browser starts using the microphone, a small panel offers to take notes. When the call ends with goodbyes (or goes quiet for 10 minutes), it offers to stop, with a countdown you can cancel.
 - **Enhance** turns your rough notes plus the transcript into clean notes using a template (meeting notes, voice memo, to-do list, interview, lecture, 1:1, or your own). You pick where that happens.
 - **Translate** notes or transcripts into other languages, on the device or with Claude.
 - **Names and terms:** list the people and jargon in your meetings so Enhance and Translate spell them right.
+- **Hides names from Claude:** before anything goes to Claude, people's names become placeholders (Person_1, Person_2…), and the real names are put back in the answer on your device.
 - **Ask:** chat with one note (“what did I commit to?”, “draft the follow-up email”) or across all of them (“what did we decide about the budget last week?”), with links back to the notes each answer came from.
 - **Folders and shared folders:** organize notes in folders. Put a folder in OneDrive, iCloud Drive, Dropbox or a network share and everyone who opens it in Sintr works on the same notes — no Sintr account or server.
 - **Integrations:** send a note to Notion, HubSpot, Attio, Affinity, or anywhere through a Zapier / Make / n8n / Power Automate webhook.
@@ -28,9 +31,11 @@ The options Parakeet shows next to its Record button — meeting audio, detect s
 | Enhance with Apple Intelligence | Your Mac (needs iPhone 15 Pro or newer on a phone) | No |
 | Enhance with the phone model | Your device | Only a one-time model download from Hugging Face, when you tap Download |
 | Detect speakers | Your device (open FluidAudio models) | Only a one-time download (a few dozen MB) from Hugging Face, when you agree |
+| Remembered voices | Your device (voice fingerprints in Sintr's folder — numbers, not recordings) | No — never sent, exported or shared |
+| Noticing calls (Mac) | Your Mac (which apps are using the microphone — never what they hear) | No |
 | Translate with Apple Translate | Your device | Only a one-time language download from Apple |
 | Ask with Apple Intelligence or the local model | Your device (search is on-device too) | No |
-| Claude (Enhance, Ask or Translate) | Anthropic's Claude API | Yes — only when you choose Claude |
+| Claude (Enhance, Ask or Translate) | Anthropic's Claude API, with people's names replaced by placeholders on your device first (Settings → Claude) | Yes — only when you choose Claude |
 | Send to Notion / HubSpot / Attio / Affinity / webhook | That app | Yes — when you press Send, or after Enhance if you turned that on for Notion or a webhook |
 | Send action items to Sectis | Your own Firebase project, encrypted on your device first (Firebase only stores scrambled data) | Yes — when you press Send, or after Enhance if you turned that on |
 | Shared folders | The folder you chose | Only through whatever syncs that folder (OneDrive, iCloud…) |
@@ -68,6 +73,9 @@ Granola's Basic and Business plans list these features. Here's where each one is
 | Record + live transcript | ✓ (keeps going with the screen locked) | ✓ |
 | Record the other side of a call | — (iOS doesn't allow it) | ✓ |
 | Detect speakers | ✓ (Speaker 1, 2… — in person) | ✓ (also Me/Them on calls) |
+| Recognize voices you've named | ✓ (your voice as “Me” in person) | ✓ |
+| Notice calls and offer to take notes | — (iOS doesn't let apps see each other) | ✓ |
+| Hide names from Claude | ✓ | ✓ |
 | Translate | ✓ | ✓ |
 | Enhance with Apple Intelligence | — (needs iPhone 15 Pro or newer) | ✓ |
 | Enhance with the phone model | ✓ (slower) | ✓ |
@@ -126,6 +134,29 @@ The first time Sintr opens, **Let Sintr transcribe your meetings** lists everyth
 2. The first time, macOS asks to let Sintr **record system audio** — click **Allow**. Without it, macOS quietly gives Sintr silence instead of the call. If you clicked Don't Allow, use the orange **Allow call audio…** button, or turn Sintr on in System Settings → Privacy & Security → Screen & System Audio Recording → System Audio Recording Only.
 3. The meters under the Record button show what Sintr hears **right now** — your microphone, and the call side (“quiet”, “waiting for Teams”, or “not allowed” if macOS is giving it silence). Play something before a meeting to check it.
 4. When you stop, the note is ready straight away. Speaker detection then runs in the background (a spinner shows next to the note); **Skip** stops it and keeps the live transcript. You can delete a note at any time, even while that runs.
+
+**Sintr notices calls.** When a call app — Zoom, Microsoft Teams, FaceTime (and iPhone calls on the Mac), Webex, Slack, Discord, WhatsApp, or Chrome, Safari, Edge, Firefox, Arc or Brave — has been using your microphone for a few seconds, a panel at the top right of the screen asks **Take notes?** Nothing is recorded until you press **Take notes**; it then starts a note called “Zoom call” (or whichever app) and records your microphone and that call (even if Meeting audio is Off, which is for in-person meetings). **Not now** skips this call; **Never for Zoom** stops asking for that app (undo it in Settings → Recording). Sintr only sees *which* apps are using the microphone — the same thing that lights up macOS's orange dot — never what they hear, and it needs no permission for that.
+
+While Sintr records a call — whether it offered or you pressed Record — it also notices when the call app lets go of the microphone. If the last words sound like goodbyes (“thanks everyone”, “talk to you later”, “bye”), the panel says **Sintr stops recording in 15 s** with **Keep recording** and **Stop now**. If the call ends without goodbyes, it keeps going; after 10 minutes with no call and nothing heard, it asks the same way (90-second countdown). Recordings under 2 minutes never stop by themselves. Turn either part off in Settings → Recording.
+
+## Recognizing voices
+
+After speaker detection, voices are labeled Speaker 1, Speaker 2… (or Them 1, Them 2… on a call). **Click (or tap) a speaker's name** to name them. Pick **Me (this is you)** for yourself, a name Sintr already knows, or type one. With **Recognize this voice in future notes** on (it is unless you turn it off), Sintr keeps a *voice fingerprint* — a list of numbers describing how that voice sounds, not a recording of it — and the next time it hears that voice, it puts the name on it. A recognized name has a small waveform next to it: click it to confirm it, change it, or press **Not Dana** if Sintr got it wrong (it then forgets what it learned from that note).
+
+- **Name yourself “Me” once on your iPhone**, and in-person recordings label your voice “Me” from then on — so Enhance writes your action items with you as the owner, and Sintr sends them to Sectis as yours. On the Mac, calls already know you: your microphone is “Me”.
+- Each voice keeps up to 8 fingerprints, from different notes, so it's recognized in different rooms and on different microphones. Sintr only uses a name when it's clearly that voice and no one else's; a voice that could be either of two people stays unnamed.
+- The other side of a call is never labeled “Me”, and two speakers in one note never get the same remembered name.
+- **Settings → Speakers** lists the voices Sintr remembers. Rename one (give it the name of another to join them), forget one, or forget them all. Turning **Recognize voices I've named** off stops both learning and recognizing.
+- Fingerprints stay on the device that learned them, in Voices.json in Sintr's folder (the portable folder, in portable mode; out of iPhone backups unless you include notes in backups). They're never sent anywhere, exported, or put in shared folders — so your iPhone and your Mac each learn voices from their own recordings.
+
+## Hiding names from Claude
+
+When you choose Claude for Enhance, Ask or Translate, **Hide people's names from Claude** (Settings → Claude, on by default) swaps names for placeholders on your device before anything is sent — “Person_1 said Person_2's budget is fine” — and swaps them back in Claude's answer as it arrives, so you only ever see real names. It hides:
+
+- the speakers you've named, the voices Sintr remembers, and your own name (the names in Settings → Integrations → Sectis, and your Mac account's name), and
+- any other personal names Apple's on-device language model finds in the text, like “ask Jordan about it”.
+
+A misheard spelling of someone you've named (“Dayna Whitfield” for Dana Whitfield) gets the same placeholder, so it comes back spelled right; so does a first name on its own. “Me”, “Them” and “Speaker 2” stay as they are, and so do company, product and place names. Names that are also ordinary words (Will, Faith) are only hidden where they're written as a name. Claude still sees what was said, just not who said it, so it can still write “Person_1 will send the report” — which you see as “Dana will send the report”. Share to another app (which you send yourself) isn't changed.
 
 ## Tips
 

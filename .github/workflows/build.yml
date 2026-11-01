@@ -93,6 +93,22 @@ jobs:
       - name: Check Sintr finds the processes that play an app's sound (Safari, Chrome, FaceTime)
         run: bash scripts/ci-audio-check.sh
 
+  logic:
+    name: Voices, names and meetings
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use the newest Xcode 26
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
+          xcodebuild -version
+
+      - name: Check voice recognition, hiding names from Claude, and meeting detection
+        run: bash scripts/ci-logic-check.sh
+
   sectis:
     name: Sectis format
     runs-on: macos-15

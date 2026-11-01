@@ -101,9 +101,10 @@ final class AskRunner {
         partial = ""
         let notes = store.notes
         let index = store.searchIndex
+        let people = engine == .claude ? NameShield.people(in: store) : []
         task = Task { [weak self] in
             do {
-                let generator = try engine.generator()
+                let generator = try engine.generator(people: people)
                 let answer = try await Ask.answer(
                     question: question, history: history, scope: scope, notes: notes, index: index,
                     generator: generator

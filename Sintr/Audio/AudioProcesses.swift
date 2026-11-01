@@ -95,6 +95,12 @@ enum AudioProcesses {
         return (value ?? 0) != 0
     }
 
+    /// Whether a process is currently taking audio from an input device (a microphone).
+    static func isUsingInput(_ object: AudioObjectID) -> Bool {
+        let value: UInt32? = readValue(object, kAudioProcessPropertyIsRunningInput)
+        return (value ?? 0) != 0
+    }
+
     static func allPIDs() -> [pid_t] {
         let needed = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
         guard needed > 0 else { return [] }
@@ -134,7 +140,7 @@ enum AudioProcesses {
 
     // MARK: Property helpers
 
-    private static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
+    static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
         AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
                                    mElement: kAudioObjectPropertyElementMain)
     }

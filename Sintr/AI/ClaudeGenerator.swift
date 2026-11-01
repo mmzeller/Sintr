@@ -41,6 +41,9 @@ struct ClaudeGenerator: TextGenerator {
     let apiKey: String
     let model: String
     var effort: ClaudeEffort = AppSettings.claudeEffortChoice
+    /// People Sintr knows by name. With "Hide people's names from Claude" on, these — and any
+    /// other personal names found in what's sent — go out as placeholders (see `NameMask`).
+    var people: [String] = []
 
     var name: String { "Claude (\(model))" }
     /// Claude reads very long transcripts in one go.
@@ -64,6 +67,17 @@ struct ClaudeGenerator: TextGenerator {
 
     private func stream(system: String, turns: [ChatTurn], maxTokens: Int, effort: ClaudeEffort,
                         onText: @escaping @Sendable (String) -> Void) async throws -> String {
+        // Names are swapped for placeholders here, on the device, and put back in the reply.
+        let mask = AppSettings.shouldHideNames ? NameMask(known: people, texts: [system] + turns.map(\.text)) : nil
+        let shield = mask?.isEmpty == false ? mask : nil
+        var sentSystem = system
+        var sentTurns = turns
+        if let shield {
+            sentSystem = shield.instruction + "\n\n" + shield.mask(system)
+            sentTurns = turns.map { ChatTurn(role: $0.role, text: shield.mask($0.text)) }
+        }
+        if let shield { ActivityLog.add("Claude: \(shield.names.count) name\(shield.names.count == 1 ? "" : "s") replaced with placeholders before sending") }
+
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 600
@@ -75,9 +89,9 @@ struct ClaudeGenerator: TextGenerator {
         var body: [String: Any] = [
             "model": model,
             "max_tokens": max(maxTokens, budget),
-            "system": system,
+            "system": sentSystem,
             "stream": true,
-            "messages": turns.map { ["role": $0.role, "content": $0.text] },
+            "messages": sentTurns.map { ["role": $0.role, "content": $0.text] },
         ]
         if effort != .modelDefault { body["output_config"] = ["effort": effort.rawValue] }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -112,7 +126,7 @@ struct ClaudeGenerator: TextGenerator {
             case "content_block_delta":
                 if event.delta?.type == "text_delta", let piece = event.delta?.text {
                     text += piece
-                    onText(text)
+                    onText(shield?.unmaskPartial(text) ?? text)
                 }
             case "message_delta":
                 stopReason = event.delta?.stop_reason ?? stopReason
@@ -130,7 +144,7 @@ struct ClaudeGenerator: TextGenerator {
                 ? "Claude used its whole budget thinking and didn't write an answer. Try a lower thinking level in Settings → Claude."
                 : "Claude sent back an empty reply.")
         }
-        return text
+        return shield?.unmask(text) ?? text
     }
 
     private static func failure(status: Int, message: String, model: String) -> Error {

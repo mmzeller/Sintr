@@ -164,6 +164,9 @@ struct Note: Codable, Identifiable, Hashable, Sendable {
     /// Voice fingerprints for detected speakers, so the same voice keeps its label when you
     /// record more into this note.
     var voicePrints: [String: [Float]] = [:]
+    /// Speakers Sintr named by recognizing a voice it remembers (label → remembered voice),
+    /// until you confirm or change the name.
+    var recognizedVoices: [String: UUID] = [:]
     /// The folder this note is in (nil: not in a folder).
     var folderID: UUID?
     /// Questions asked about this note in Ask, and the answers.
@@ -183,6 +186,14 @@ struct Note: Codable, Identifiable, Hashable, Sendable {
     func displayName(forSpeaker label: String) -> String {
         let name = speakerNames[label]?.trimmingCharacters(in: .whitespaces) ?? ""
         return name.isEmpty ? label : name
+    }
+
+    /// The voice fingerprint for a speaker label. ("Them" is shown for "Them 1" while only one
+    /// voice is heard on the call side, but the fingerprint keeps the numbered label.)
+    func voicePrint(for label: String) -> [Float]? {
+        if let print = voicePrints[label], !print.isEmpty { return print }
+        if label == "Them", let print = voicePrints["Them 1"], !print.isEmpty { return print }
+        return nil
     }
 
     /// Speaker labels in the order they first speak.
@@ -259,6 +270,7 @@ struct Note: Codable, Identifiable, Hashable, Sendable {
         speakerNames = try c.decodeIfPresent([String: String].self, forKey: .speakerNames) ?? [:]
         translations = try c.decodeIfPresent([NoteTranslation].self, forKey: .translations) ?? []
         voicePrints = try c.decodeIfPresent([String: [Float]].self, forKey: .voicePrints) ?? [:]
+        recognizedVoices = (try? c.decodeIfPresent([String: UUID].self, forKey: .recognizedVoices)) ?? [:]
         folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
         chat = try c.decodeIfPresent([ChatMessage].self, forKey: .chat) ?? []
         sentTo = try c.decodeIfPresent([NoteSend].self, forKey: .sentTo) ?? []

@@ -2,16 +2,17 @@ import SwiftUI
 
 @main
 struct SintrApp: App {
-    @State private var store = NoteStore()
+    @State private var store: NoteStore
     @State private var hub: AudioHub
     @State private var post: PostProcessor
     @State private var recorder: Recorder
     @State private var importer: Importer
-    @State private var appState = AppState()
+    @State private var appState: AppState
     @State private var templates = TemplateStore()
     @State private var askStore = AskStore()
     #if os(macOS)
     @State private var localAPI = LocalAPIServer()
+    @State private var meetings: MeetingWatcher
     #endif
     @Environment(\.scenePhase) private var scenePhase
 
@@ -31,12 +32,20 @@ struct SintrApp: App {
         #if os(macOS)
         HangWatch.start()
         #endif
+        let store = NoteStore()
+        let appState = AppState()
         let hub = AudioHub()
         let post = PostProcessor()
+        let recorder = Recorder(hub: hub, post: post)
+        _store = State(initialValue: store)
+        _appState = State(initialValue: appState)
         _hub = State(initialValue: hub)
         _post = State(initialValue: post)
-        _recorder = State(initialValue: Recorder(hub: hub, post: post))
+        _recorder = State(initialValue: recorder)
         _importer = State(initialValue: Importer(post: post))
+        #if os(macOS)
+        _meetings = State(initialValue: MeetingWatcher(store: store, recorder: recorder, appState: appState, hub: hub))
+        #endif
     }
 
     var body: some Scene {
@@ -96,6 +105,7 @@ struct SintrApp: App {
             #if os(macOS)
             .environment(localAPI)
             .task { localAPI.attach(store) }
+            .task { meetings.start() }
             #endif
             .task { await hub.startMonitoringIfWanted() }
             .onChange(of: scenePhase) { _, phase in

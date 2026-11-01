@@ -198,7 +198,8 @@ struct TranslateSheet: View {
                 switch engine {
                 case .claude:
                     guard let key = APIKeyStore.claudeKey else { return }
-                    let generator = ClaudeGenerator(apiKey: key, model: AppSettings.claudeModelID)
+                    let generator = ClaudeGenerator(apiKey: key, model: AppSettings.claudeModelID,
+                                                    people: NameShield.people(in: store))
                     name = generator.name
                     result = try await Translator.translateWithModel(text, to: code, generator: generator) { value in
                         Task { @MainActor in progress = value }

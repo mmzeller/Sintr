@@ -192,7 +192,10 @@ final class AudioHub {
         isRecording = false
         #if os(macOS)
         if AppSettings.shouldMonitorLevels {
-            settingsChanged()  // Apply any changes made during the recording.
+            // Back to what Settings says (changed during the recording, or a recording that
+            // heard one call app only): whatever is already running as wanted keeps running.
+            lastSettings = ""
+            settingsChanged()
             return
         }
         #endif

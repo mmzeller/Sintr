@@ -40,12 +40,13 @@ enum AskEngine: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    @MainActor func generator() throws -> any TextGenerator {
+    /// - Parameter people: names Sintr knows, hidden from Claude (`NameShield`).
+    @MainActor func generator(people: [String] = []) throws -> any TextGenerator {
         if let reason = unavailableReason { throw EnhanceError.unavailable(reason) }
         switch self {
         case .apple: return AppleGenerator()
         case .local: return PhoneModelGenerator(choice: PhoneModelChoice.selected)
-        case .claude: return ClaudeGenerator(apiKey: APIKeyStore.claudeKey ?? "", model: AppSettings.claudeModelID)
+        case .claude: return ClaudeGenerator(apiKey: APIKeyStore.claudeKey ?? "", model: AppSettings.claudeModelID, people: people)
         }
     }
 }

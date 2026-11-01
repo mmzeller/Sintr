@@ -44,6 +44,16 @@ enum AppSettings {
     static let integrations = "integrations"
     /// The "Let Sintr transcribe your meetings" screen has been seen on this device.
     static let setupDone = "setupDone"
+    /// Name speakers whose voices Sintr remembers from earlier notes (see `VoiceLibrary`).
+    static let recognizeVoices = "recognizeVoices"
+    /// Mac: offer to take notes when a call app starts using the microphone.
+    static let detectMeetings = "detectMeetings"
+    /// Mac: offer to stop recording when the call ends (goodbyes, or a long quiet stretch).
+    static let autoStopMeetings = "autoStopMeetings"
+    /// Mac: call apps never to offer notes for (bundle IDs, one per line).
+    static let ignoredMeetingApps = "ignoredMeetingApps"
+    /// Replace people's names with placeholders before anything goes to Claude.
+    static let hideNamesFromClaude = "hideNamesFromClaude"
 
     static let defaultClaudeModel = "claude-sonnet-5-5"
 
@@ -80,6 +90,11 @@ enum AppSettings {
             localAPIPort: 52817,
             integrations: "",
             setupDone: false,
+            recognizeVoices: true,
+            detectMeetings: true,
+            autoStopMeetings: true,
+            ignoredMeetingApps: "",
+            hideNamesFromClaude: true,
         ])
     }
 
@@ -108,6 +123,17 @@ enum AppSettings {
     static var microphoneDeviceUID: String { UserDefaults.standard.string(forKey: microphoneUID) ?? "" }
     static var glossaryText: String {
         (UserDefaults.standard.string(forKey: glossary) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    static var shouldRecognizeVoices: Bool { UserDefaults.standard.bool(forKey: recognizeVoices) }
+    static var shouldDetectMeetings: Bool { UserDefaults.standard.bool(forKey: detectMeetings) }
+    static var shouldAutoStopMeetings: Bool { UserDefaults.standard.bool(forKey: autoStopMeetings) }
+    static var shouldHideNames: Bool { UserDefaults.standard.bool(forKey: hideNamesFromClaude) }
+    static var ignoredMeetingAppIDs: Set<String> {
+        Set((UserDefaults.standard.string(forKey: ignoredMeetingApps) ?? "")
+            .split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+    }
+    static func setIgnoredMeetingAppIDs(_ ids: Set<String>) {
+        UserDefaults.standard.set(ids.sorted().joined(separator: "\n"), forKey: ignoredMeetingApps)
     }
     static var claudeModelID: String {
         let value = UserDefaults.standard.string(forKey: claudeModel) ?? ""

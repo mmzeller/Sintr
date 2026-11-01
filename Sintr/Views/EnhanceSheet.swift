@@ -158,12 +158,12 @@ struct EnhanceSheet: View {
             .alert("Send to Claude?", isPresented: $confirmClaude) {
                 Button("Send") {
                     if let key = claudeKey {
-                        run(ClaudeGenerator(apiKey: key, model: AppSettings.claudeModelID))
+                        run(ClaudeGenerator(apiKey: key, model: AppSettings.claudeModelID, people: NameShield.people(in: store)))
                     }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This sends “\(note.displayTitle)” — \(wordCount(note.myNotes)) words of your notes and \(wordCount(note.transcriptText)) words of transcript — to Anthropic's Claude API over an encrypted connection. Nothing else on this \(Platform.deviceName) is sent.")
+                Text("This sends “\(note.displayTitle)” — \(wordCount(note.myNotes)) words of your notes and \(wordCount(note.transcriptText)) words of transcript — to Anthropic's Claude API over an encrypted connection. Nothing else on this \(Platform.deviceName) is sent.\(AppSettings.shouldHideNames ? " People's names are replaced with placeholders first and put back in the answer here." : "")")
             }
         }
         .interactiveDismissDisabled(isRunning)

@@ -19,12 +19,17 @@ struct SettingsView: View {
     @AppStorage(AppSettings.removeEcho) private var removeEcho = true
     @AppStorage(AppSettings.claudeEffort) private var claudeEffort = ClaudeEffort.modelDefault.rawValue
     @AppStorage(AppSettings.notesLanguage) private var notesLanguage = ""
+    @AppStorage(AppSettings.recognizeVoices) private var recognizeVoices = true
+    @AppStorage(AppSettings.hideNamesFromClaude) private var hideNames = true
     #if os(macOS)
     @Environment(\.openWindow) private var openWindow
     @Environment(LocalAPIServer.self) private var localAPI
     @AppStorage(AppSettings.allowAIApps) private var allowAIApps = false
     @AppStorage(AppSettings.localAPI) private var localAPIOn = false
     @AppStorage(AppSettings.localAPIPort) private var localAPIPort = 52817
+    @AppStorage(AppSettings.detectMeetings) private var detectMeetings = true
+    @AppStorage(AppSettings.autoStopMeetings) private var autoStopMeetings = true
+    @AppStorage(AppSettings.ignoredMeetingApps) private var ignoredMeetingApps = ""
     @State private var apiToken = ""
     @State private var showToken = false
     @State private var connectMessage: String?
@@ -208,6 +213,28 @@ struct SettingsView: View {
                 LiveInputs()
             }
             Toggle("Remove echo of the call from my microphone", isOn: $removeEcho)
+            Toggle("Offer to take notes when a call starts", isOn: $detectMeetings)
+            Toggle("Offer to stop recording when the call ends", isOn: $autoStopMeetings)
+            let ignored = ignoredMeetingApps.split(whereSeparator: \.isNewline).map(String.init).filter { !$0.isEmpty }
+            if detectMeetings, !ignored.isEmpty {
+                LabeledContent("Never offered for") {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        ForEach(ignored, id: \.self) { id in
+                            HStack(spacing: 6) {
+                                Text(CallApps.name(for: id))
+                                Button("Allow", systemImage: "xmark.circle.fill") {
+                                    var set = AppSettings.ignoredMeetingAppIDs
+                                    set.remove(id)
+                                    AppSettings.setIgnoredMeetingAppIDs(set)
+                                }
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
+                                .help("Offer notes for \(CallApps.name(for: id)) calls again")
+                            }
+                        }
+                    }
+                }
+            }
             #endif
             Toggle("Save audio with notes", isOn: $keepRecordings)
             #if os(iOS)
@@ -224,6 +251,7 @@ struct SettingsView: View {
                 Text("macOS gives Sintr silence instead of the call until you allow it: \(SystemAudioPermission.settingsPath).")
                 Text("Live input meters keep the microphone (and call audio) open so you can see what Sintr hears before you record — macOS shows its microphone indicator meanwhile. Nothing is saved or transcribed until you press Record.")
                 Text("Without headphones your microphone also hears the call from your speakers. “Remove echo” drops those duplicate lines from “Me” — while recording, and again more precisely afterwards. Headphones still work best.")
+                Text("When Zoom, Teams, FaceTime, Webex, Slack, Discord, WhatsApp or a browser starts using your microphone, a small panel at the top of the screen offers to take notes — nothing is recorded until you press Take notes. Sintr sees only which apps are using the microphone, never what they hear. While it records a call, it offers to stop once the call has ended with goodbyes, or after \(Int(CallEnding.quietLimit / 60)) quiet minutes with no call, with a countdown you can cancel.")
                 #endif
                 Text("Saved audio lets you rebuild a transcript, detect speakers later, or export the recording. About 15–30 MB per hour.")
                 #if os(iOS)
@@ -258,10 +286,17 @@ struct SettingsView: View {
             if let speakerError {
                 Text(speakerError).foregroundStyle(.red).font(.footnote)
             }
+            Toggle("Recognize voices I've named", isOn: $recognizeVoices)
+            if recognizeVoices {
+                RememberedVoicesList()
+            }
         } header: {
             Text("Speakers")
         } footer: {
-            Text("On calls, your microphone is “Me” and the call is “Them” (or Them 1, Them 2… when several people talk). In person, voices are labeled Speaker 1, Speaker 2… \(Platform.isMac ? "Click" : "Tap") a speaker's name in a transcript to rename them. Runs on this \(Platform.deviceName) with open models (a one-time download of a few dozen MB) from Hugging Face; your audio is never uploaded.")
+            VStack(alignment: .leading, spacing: 6) {
+                Text("On calls, your microphone is “Me” and the call is “Them” (or Them 1, Them 2… when several people talk). In person, voices are labeled Speaker 1, Speaker 2… \(Platform.isMac ? "Click" : "Tap") a speaker's name in a transcript to rename them. Runs on this \(Platform.deviceName) with open models (a one-time download of a few dozen MB) from Hugging Face; your audio is never uploaded.")
+                Text("When you name a speaker, Sintr can remember the voice and put the name on it in later recordings — name yourself “Me” and your in-person recordings know which voice is you. It keeps voice fingerprints (numbers that describe how a voice sounds, not recordings) on this \(Platform.deviceName) only; they're never sent anywhere or exported. A recognized name shows a small waveform; \(Platform.isMac ? "click" : "tap") it to confirm, change it, or say it's someone else.")
+            }
         }
     }
 
@@ -388,10 +423,14 @@ struct SettingsView: View {
                     .textInputAutocapitalization(.never)
                     #endif
             }
+            Toggle("Hide people's names from Claude", isOn: $hideNames)
         } header: {
             Text("Claude")
         } footer: {
-            Text("Used only when you choose Claude for Enhance, Ask or Translate. Claude thinks before it answers; “Thinking” sets how much — more is slower and costs more. Get a key at console.anthropic.com — it's billed per use and is separate from a Claude.ai subscription. The key is kept in this \(Platform.deviceName)'s Keychain.")
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Used only when you choose Claude for Enhance, Ask or Translate. Claude thinks before it answers; “Thinking” sets how much — more is slower and costs more. Get a key at console.anthropic.com — it's billed per use and is separate from a Claude.ai subscription. The key is kept in this \(Platform.deviceName)'s Keychain.")
+                Text("Hiding names: before anything goes to Claude, Sintr swaps people's names for placeholders like Person_1 — the speakers you've named, the voices it remembers, your own name, and any other names Apple's on-device language model finds in the text — and puts the real names back in Claude's answer on this \(Platform.deviceName). Claude still sees what was said, just not who said it. A misheard spelling of someone you've named comes back spelled right. Names of companies, places and products aren't hidden.")
+            }
         }
     }
 

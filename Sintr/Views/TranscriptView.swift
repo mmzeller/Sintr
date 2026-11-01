@@ -7,8 +7,7 @@ struct TranscriptView: View {
     @Environment(Recorder.self) private var recorder
     @Environment(Importer.self) private var importer
     @Environment(PostProcessor.self) private var post
-    @State private var renaming: String?
-    @State private var nameDraft = ""
+    @State private var renaming: SpeakerRef?
     @State private var askDownload = false
     @State private var downloading: Double?
 
@@ -62,6 +61,7 @@ struct TranscriptView: View {
                                 color: color(segment.speaker),
                                 text: segment.text,
                                 isLive: false,
+                                recognized: note.recognizedVoices[segment.speaker] != nil,
                                 rename: segment.speaker.isEmpty ? nil : { startRenaming(segment.speaker) })
                         }
                         if isRecordingHere {
@@ -69,7 +69,7 @@ struct TranscriptView: View {
                                 if let text = recorder.volatileText[speaker], !text.isEmpty {
                                     SegmentRow(time: "now", speaker: speaker.isEmpty ? nil : speaker,
                                                color: color(speaker),
-                                               text: text, isLive: true, rename: nil)
+                                               text: text, isLive: true, recognized: false, rename: nil)
                                 }
                             }
                         }
@@ -84,14 +84,8 @@ struct TranscriptView: View {
                 .onAppear { proxy.scrollTo("end", anchor: .bottom) }
             }
         }
-        .alert("Rename \(renaming.map { note.displayName(forSpeaker: $0) } ?? "")", isPresented: Binding(
-            get: { renaming != nil }, set: { if !$0 { renaming = nil } }
-        )) {
-            TextField("Name", text: $nameDraft)
-            Button("Rename") { saveName() }
-            Button("Cancel", role: .cancel) { renaming = nil }
-        } message: {
-            Text("Every line by this speaker in this note will show the new name. Enhance uses it too.")
+        .sheet(item: $renaming) { ref in
+            SpeakerNameSheet(noteID: noteID, label: ref.id)
         }
         .alert("Download speaker detection?", isPresented: $askDownload) {
             Button("Download") { downloadThenIdentify() }
@@ -156,17 +150,7 @@ struct TranscriptView: View {
     }
 
     private func startRenaming(_ speaker: String) {
-        nameDraft = note.speakerNames[speaker] ?? ""
-        renaming = speaker
-    }
-
-    private func saveName() {
-        guard let speaker = renaming else { return }
-        let name = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        store.edit(noteID) { note in
-            note.speakerNames[speaker] = name.isEmpty ? nil : name
-        }
-        renaming = nil
+        renaming = SpeakerRef(id: speaker)
     }
 
     private func downloadThenIdentify() {
@@ -192,6 +176,8 @@ struct SegmentRow: View {
     let color: Color
     let text: String
     let isLive: Bool
+    /// The name came from a voice Sintr remembers (not one you typed in this note).
+    var recognized = false
     let rename: (() -> Void)?
 
     var body: some View {
@@ -225,14 +211,26 @@ struct SegmentRow: View {
     @ViewBuilder private func speakerLabel(_ speaker: String) -> some View {
         if let rename {
             Button(action: rename) {
-                Text(speaker).font(.caption.weight(.bold)).foregroundStyle(color)
+                labelText(speaker)
             }
             .buttonStyle(.plain)
-            .help("Rename this speaker")
-            .accessibilityHint("Renames this speaker")
+            .help(recognized ? "Sintr recognized this voice from earlier notes. Click to confirm or change the name." : "Rename this speaker")
+            .accessibilityHint(recognized ? "Recognized voice. Confirms or changes the name" : "Renames this speaker")
         } else {
-            Text(speaker).font(.caption.weight(.bold)).foregroundStyle(color)
+            labelText(speaker)
         }
+    }
+
+    private func labelText(_ speaker: String) -> some View {
+        HStack(spacing: 3) {
+            Text(speaker).font(.caption.weight(.bold))
+            if recognized {
+                Image(systemName: "waveform")
+                    .font(.caption2)
+                    .accessibilityLabel("recognized voice")
+            }
+        }
+        .foregroundStyle(color)
     }
 
     private var words: some View {

@@ -159,6 +159,16 @@ enum SpeakerPass {
             note.voicePrints.merge(prints) { _, new in new }
             normalizeCallLabels(&note)
         }
+        // Name the voices Sintr remembers from earlier notes (by the labels the transcript
+        // shows: a lone "Them 1" is shown as "Them").
+        if detect, let labels = store.note(noteID).map({ Set($0.speakers) }) {
+            var shown: [String: [Float]] = [:]
+            for (label, print) in prints {
+                if labels.contains(label) { shown[label] = print }
+                else if label == "Them 1", labels.contains("Them") { shown["Them"] = print }
+            }
+            VoiceRecognition.apply(noteID: noteID, store: store, prints: shown)
+        }
         store.saveNow()
     }
 
@@ -173,6 +183,10 @@ enum SpeakerPass {
         if let name = note.speakerNames[from], note.speakerNames[to] == nil {
             note.speakerNames[to] = name
             note.speakerNames[from] = nil
+        }
+        if let voice = note.recognizedVoices[from], note.recognizedVoices[to] == nil {
+            note.recognizedVoices[to] = voice
+            note.recognizedVoices[from] = nil
         }
     }
 

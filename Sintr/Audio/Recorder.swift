@@ -44,6 +44,8 @@ final class Recorder {
     let post: PostProcessor
 
     @ObservationIgnored private var pendingNoteID: UUID?
+    /// Meeting audio for this recording only (a call Sintr detected), instead of the setting.
+    @ObservationIgnored private var requestedMeeting: MeetingAudio?
     @ObservationIgnored private var skipSpeakerPack = false
     @ObservationIgnored private var pipes: [AudioPipe] = []
     @ObservationIgnored private var offset: Double = 0
@@ -68,8 +70,10 @@ final class Recorder {
 
     // MARK: Start
 
-    func start(noteID: UUID, store: NoteStore) async {
+    /// - Parameter meeting: what to record besides the microphone this time (nil: the setting).
+    func start(noteID: UUID, store: NoteStore, meeting: MeetingAudio? = nil) async {
         guard phase == .idle else { return }
+        requestedMeeting = meeting
         guard !post.isBusy(with: noteID) else {
             notice = "Sintr is still working on this note's last recording (\(post.message)). Press Skip to record right away."
             return
@@ -103,7 +107,7 @@ final class Recorder {
                 Task { @MainActor [weak self] in self?.downloadProgress = value }
             }
             phase = .idle
-            await start(noteID: noteID, store: store)
+            await start(noteID: noteID, store: store, meeting: requestedMeeting)
         } catch {
             phase = .idle
             errorMessage = "The speech model didn't download: \(error.localizedDescription)"
@@ -130,7 +134,7 @@ final class Recorder {
         } else {
             skipSpeakerPack = true
         }
-        await start(noteID: noteID, store: store)
+        await start(noteID: noteID, store: store, meeting: requestedMeeting)
     }
 
     private func prepareAndStart(noteID: UUID, store: NoteStore) async throws {
@@ -150,7 +154,7 @@ final class Recorder {
 
         var meeting = MeetingAudio.off
         #if os(macOS)
-        meeting = AppSettings.meetingAudioChoice
+        meeting = requestedMeeting ?? AppSettings.meetingAudioChoice
         if meeting.isOn, SystemAudioPermission.canCheck, SystemAudioPermission.status != .allowed {
             phase = .preparing("Asking macOS for permission to hear calls…")
             if !(await SystemAudioPermission.request()) {
