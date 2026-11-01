@@ -53,11 +53,12 @@ struct MeetingPromptView: View {
             .tint(.red)
             Button("Not now", action: notNow)
             Spacer(minLength: 0)
-            Button("Never for \(app.name)", action: neverOffer)
-                .buttonStyle(.borderless)
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
+        Button("Don't offer for \(app.name) calls again", action: neverOffer)
+            .buttonStyle(.borderless)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
     }
 
     @ViewBuilder private func endingContent(_ ending: StopCountdown) -> some View {
