@@ -162,6 +162,14 @@ enum SectisFormat {
         var isInbox: Bool { kind == .inbox }
         /// "Council › Q4 rollout" for a project in an area.
         var fullTitle: String { area.map { "\($0) › \(title)" } ?? title }
+        /// The page it is in Sectis, for a Notepad note: "inbox", "project:…" or "area:…".
+        var notepadPage: String {
+            switch kind {
+            case .inbox: return "inbox"
+            case .project: return "project:\(id)"
+            case .area: return "area:\(id)"
+            }
+        }
     }
 
     /// Someone else's action item, kept in Sectis's Waiting For list: who it's waiting on, the
@@ -265,6 +273,98 @@ enum SectisFormat {
 
     static func tagRecord(id: String, title: String) -> [String: Any] {
         ["id": id, "title": title, "parentId": NSNull(), "order": 100_000]
+    }
+
+    // MARK: Sectis's Notepad
+
+    /// The ID of a meeting's summary in Sectis's Notepad: always the same for a note, so
+    /// sending the note again doesn't add a second summary.
+    static func summaryID(noteID: String) -> String {
+        let digest = SHA256.hash(data: Data("sintr-summary|\(noteID)".utf8))
+        return "sn" + digest.map { String(format: "%02x", $0) }.joined().prefix(12)
+    }
+
+    /// A note as Sectis's Notepad stores it, with every field Sectis's own notes have. `page`
+    /// is where it counts as written ("inbox", "project:…", "area:…"): its This Page and the
+    /// chip that goes back there.
+    static func noteRecord(id: String, text: String, page: String, now: Date) -> [String: Any] {
+        let ms = Int64(now.timeIntervalSince1970 * 1000)
+        return ["id": id, "type": "note", "text": text, "ctx": page, "pinned": false, "archived": false,
+                "createdAt": ms, "modifiedAt": ms]
+    }
+
+    /// What Sintr puts in Sectis's Notepad for a meeting: its title and when (the first line,
+    /// which Sectis uses as the note's name), the summary, and a link back to the note.
+    static func summaryNoteText(title: String, when: String, summary: String, link: String) -> String {
+        "\(title) — \(when)\n\(summary)\n\n[Open in Sintr](\(link))"
+    }
+
+    /// Headings that a meeting's summary sits under in enhanced notes, and its decisions.
+    private static let summaryHeadings: Set<String> = [
+        "summary", "meeting summary", "executive summary", "summary of discussion", "overview", "tldr", "tl dr", "recap",
+        "key points", "key takeaways", "takeaways", "highlights", "main points",
+    ]
+    private static let decisionHeadings: Set<String> = ["decisions", "decisions made", "key decisions", "agreements", "agreed", "outcomes"]
+    /// Sections that aren't a summary, even at the top of the notes.
+    private static let notSummary: Set<String> = ["attendees", "participants", "agenda", "people", "present", "transcript"]
+
+    /// The summary part of enhanced meeting notes: the section under a "Summary" heading (or
+    /// "Overview", "TL;DR", "Key points"…), plus the decisions when there's a section of them;
+    /// otherwise the opening lines (or the first section that isn't action items, attendees or
+    /// the agenda). Cut at the end of a line once it passes about `limit` characters. Nil when
+    /// there's nothing that reads as a summary.
+    static func meetingSummary(_ markdown: String, limit: Int = 1200) -> String? {
+        /// "## Summary", "**Summary**" or "Summary:" on a line of its own.
+        func heading(_ line: String) -> String? {
+            let text = line.trimmingCharacters(in: .whitespaces)
+            if let match = text.firstMatch(of: #/^#{1,6}\s+(.+)$/#) { return String(match.output.1) }
+            if text.count > 4, text.hasPrefix("**"), text.hasSuffix("**"), !text.dropFirst(2).dropLast(2).contains("**") {
+                return String(text.dropFirst(2).dropLast(2))
+            }
+            if text.hasSuffix(":"), text.count <= 40, text.split(separator: " ").count <= 4,
+               text.firstMatch(of: #/^(?:[-*+•]|\d+[.)])\s/#) == nil {
+                return String(text.dropLast())
+            }
+            return nil
+        }
+        func key(_ title: String) -> String {
+            let letters = String(ActionItemParser.normalize(ActionItemParser.plain(title)).map { $0.isLetter || $0.isNumber ? $0 : " " })
+            return letters.split(separator: " ").joined(separator: " ")
+        }
+        func text(_ body: [String]) -> String { body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        var sections: [(title: String?, body: [String])] = [(nil, [])]
+        for line in markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
+            if let title = heading(line) { sections.append((title, [])) } else { sections[sections.count - 1].body.append(line) }
+        }
+        var parts: [String] = []
+        if let section = sections.first(where: { section in section.title.map { summaryHeadings.contains(key($0)) } ?? false }) {
+            let body = text(section.body)
+            if !body.isEmpty { parts.append(body) }
+        }
+        if let section = sections.first(where: { section in section.title.map { decisionHeadings.contains(key($0)) } ?? false }) {
+            let body = text(section.body)
+            if !body.isEmpty { parts.append("**Decisions**\n" + body) }
+        }
+        if parts.isEmpty {
+            // No summary heading: what the notes open with.
+            let opening = sections.first { section in
+                guard !text(section.body).isEmpty else { return false }
+                guard let title = section.title else { return true }
+                return !ActionItemParser.isActionHeading(title) && !notSummary.contains(key(title))
+                    && !decisionHeadings.contains(key(title))
+            }
+            if let opening { parts.append(text(opening.body)) }
+        }
+        guard !parts.isEmpty else { return nil }
+        var result = ""
+        for line in parts.joined(separator: "\n\n").components(separatedBy: "\n") {
+            if !result.isEmpty, result.count + line.count + 1 > limit {
+                return result.trimmingCharacters(in: .whitespacesAndNewlines) + "\n…"
+            }
+            result += (result.isEmpty ? "" : "\n") + line
+        }
+        return result
     }
 }
 

@@ -46,6 +46,9 @@ function isInbox(t) { return t.start === 'inbox' && !t.projectId && !t.areaId; }
 function isWaiting(t) { return !!(t && t.type === 'todo' && t.waitFor && t.status === 'open' && !t.trashed && !t.isTemplate); }
 // (from Sectis's notes formatting: what makes a link in a to-do's notes)
 const MD_LINK = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+// (from Sectis's Notepad: a note's fields, normalizeNote)
+function normalizeNote(n) { return Object.assign({ type: 'note', text: '', ctx: null, pinned: false, archived: false, createdAt: 0, modifiedAt: 0 }, n); }
+const noteTitle = (n) => { const l = (n.text || '').split('\n').map((s) => s.trim()).find(Boolean); return l ? l.replace(/^(?:#{1,6}\s+|(?:[-*•+]|\d+[.)])\s+(?:\[[ xX]\]\s*)?)/, '').replace(/\*\*|__|`/g, '') : 'Empty Note'; };
 // ---- end of Sectis code ----
 
 function fail(message) { console.error('✗ ' + message); process.exit(1); }
@@ -113,6 +116,18 @@ if (mode === 'make') {
   try { a = await decryptRec(aes, sintr.area); } catch (e) { fail('Sectis could not decrypt the area to-do: ' + e); }
   check(a.areaId === 'area9' && a.projectId === null && a.start === 'anytime' && !isInbox(a) && !isWaiting(a), 'a to-do for an area is in that area');
   check(Object.keys(a).sort().join(',') === shapeKeys, '…with exactly the fields of a Sectis to-do');
+
+  // The meeting's summary, as a note in Sectis's Notepad.
+  let note;
+  try { note = await decryptRec(aes, sintr.note); } catch (e) { fail('Sectis could not decrypt the summary note: ' + e); }
+  check(note.id === sintr.note.id && /^sn[0-9a-f]{12}$/.test(note.id), 'the summary note has its stable Sintr id');
+  check(Object.keys(note).sort().join(',') === Object.keys(normalizeNote({ id: '' })).sort().join(','), 'it has exactly the fields of a Sectis note');
+  check(note.type === 'note' && note.ctx === 'project:proj123' && note.pinned === false && note.archived === false, 'it is a note on the project\'s page (This Page), not pinned or archived');
+  check(noteTitle(note) === 'Weekly sync — Oct 22, 2026 at 10:00 AM', `Sectis names it after the meeting and when: ${noteTitle(note)}`);
+  check(note.text.includes('We reviewed the Q4 rollout') && note.text.includes('**Decisions**\n- Go with Vimeo Enterprise'), 'it has the summary and the decisions');
+  const noteLinks = [...note.text.matchAll(MD_LINK)].map((m) => m[2]);
+  check(noteLinks.length === 1 && noteLinks[0] === 'sintr://note/B1A2C3D4-0000-4000-8000-000000000001', 'it links back to the meeting in a way Sectis shows as a link');
+  check(Number.isInteger(note.createdAt) && note.createdAt === note.modifiedAt && note.createdAt > 1.7e12, 'its times are whole milliseconds');
 } else if (mode === 'listen') {
   const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'));
   const cloud = JSON.parse(readFileSync(sintrPath, 'utf8')).cloud;
@@ -139,8 +154,8 @@ if (mode === 'make') {
     }, (err) => { clearTimeout(timer); reject(err); });
   }).catch((e) => fail(String(e)));
 
-  check(docs.length === 1 + cloud.ids.length + 3, `Sectis's sync query sees the tag, ${cloud.ids.length} to-dos, a project, an area and a waiting to-do`);
-  const SYNC_KINDS = { todo: 'todos', project: 'projects', heading: 'headings', area: 'areas', tag: 'tags' };
+  check(docs.length === 1 + cloud.ids.length + 4, `Sectis's sync query sees the tag, ${cloud.ids.length} to-dos, a project, an area, a waiting to-do and a summary note`);
+  const SYNC_KINDS = { todo: 'todos', project: 'projects', heading: 'headings', area: 'areas', tag: 'tags', smart: 'smart', focus: 'focuses', note: 'notes' };
   for (const d of docs) {
     if (!(d.t && typeof d.t.seconds === 'number')) fail(`${d.id}: t should be a server timestamp`);
     if (typeof d.m !== 'number') fail(`${d.id}: m should be a number`);
@@ -163,6 +178,8 @@ if (mode === 'make') {
   check(waiting.rec.projectId === cloud.projectID && records[cloud.projectID]?.k === 'project', '…in the project Sintr read from Sectis');
   check(waiting.rec.tags.includes(cloud.tagID) && waiting.rec.tags.includes('ptag') && waiting.rec.tags.includes('atag'), '…with the Meeting tag and the project\'s and area\'s tags');
   check(waiting.rec.checklist.length === 1 && waiting.rec.checklist[0].title === 'With the new rates', '…and its checklist');
+  const summary = records[cloud.noteID];
+  check(summary && summary.k === 'note' && summary.rec.ctx === 'project:' + cloud.projectID && normalizeNote(summary.rec).archived === false, 'Sectis decrypts the summary note, on the project\'s page');
   await app.delete();
   process.exit(0);
 } else {

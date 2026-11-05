@@ -98,6 +98,8 @@ struct IntegrationConfig: Codable, Equatable, Sendable {
 struct SectisOptions: Codable, Equatable, Sendable {
     /// Other people's action items go to Sectis's Waiting For (nil: yes).
     var waitingFor: Bool?
+    /// A summary of the meeting goes to Sectis's Notepad (nil: yes).
+    var summaryNote: Bool?
     /// Your Sectis's web address, learned when you open a Sintr link from Sectis; Open in
     /// Sectis uses it.
     var address: String?

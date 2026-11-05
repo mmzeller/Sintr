@@ -94,11 +94,43 @@ struct SectisSelfTest {
         let areaRecord = SectisFormat.todoRecord(id: "snarea0000001", title: "Book the room", notes: "", deadline: nil, tags: [],
                                                  order: 0, now: Date(), place: .init(kind: .area, id: "area9", title: "Home"))
         let areaSealed = try SectisFormat.encrypt(areaRecord, key: key)
+
+        // MARK: A meeting's summary, for Sectis's Notepad
+        let enhancedSample = """
+            ## Summary
+            We reviewed the Q4 rollout. Dana will handle the room.
+            ## Decisions
+            - Go with Vimeo Enterprise
+            ## Action items
+            - [ ] Send the updated budget to finance — Me, by Friday
+            """
+        let summary = SectisFormat.meetingSummary(enhancedSample)
+        check(summary == "We reviewed the Q4 rollout. Dana will handle the room.\n\n**Decisions**\n- Go with Vimeo Enterprise",
+              "a meeting's summary and decisions: \(summary ?? "nil")")
+        let opening = SectisFormat.meetingSummary("# Weekly sync\nWe went over the budget.\n## Action items\n- [ ] Send it — Me")
+        check(opening == "We went over the budget.", "…or what the notes open with, under their title: \(opening ?? "nil")")
+        check(SectisFormat.meetingSummary("## Attendees\n- Dana\n- Me\n## Action items\n- [ ] Send it — Me") == nil,
+              "no summary from notes that are only attendees and action items")
+        let tldr = SectisFormat.meetingSummary("**TL;DR:**\nShip on Friday.\n**Next steps**\n- Me: tell Dana")
+        check(tldr == "Ship on Friday.", "a bold TL;DR label counts: \(tldr ?? "nil")")
+        check(SectisFormat.meetingSummary("") == nil, "no summary from empty notes")
+        let long = SectisFormat.meetingSummary("## Summary\n" + (1...80).map { "Point number \($0) of a long meeting." }.joined(separator: "\n"), limit: 300) ?? ""
+        check(long.hasSuffix("\n…") && long.count < 340, "a long summary is cut at the end of a line, with … (\(long.count) characters)")
+        let summaryID = SectisFormat.summaryID(noteID: "B1A2C3D4-0000-4000-8000-000000000001")
+        check(summaryID == SectisFormat.summaryID(noteID: "B1A2C3D4-0000-4000-8000-000000000001") && summaryID != id
+              && summaryID != SectisFormat.summaryID(noteID: "B1A2C3D4-0000-4000-8000-000000000002"), "the summary's id is the same each time for a meeting, and its own")
+        check(project.notepadPage == "project:proj123" && SectisFormat.Place.inbox.notepadPage == "inbox"
+              && SectisFormat.Place(kind: .area, id: "area9", title: "Home").notepadPage == "area:area9", "the page a summary goes on")
+        let summaryNote = SectisFormat.summaryNoteText(title: "Weekly sync", when: "Oct 22, 2026 at 10:00 AM", summary: summary ?? "",
+                                                       link: "sintr://note/B1A2C3D4-0000-4000-8000-000000000001")
+        let noteSealed = try SectisFormat.encrypt(SectisFormat.noteRecord(id: summaryID, text: summaryNote, page: project.notepadPage, now: Date()), key: key)
+
         let out: [String: Any] = [
             "space": space, "c": sealed.c, "iv": sealed.iv,
             "expected": ["id": id, "title": "Send the budget — café ✓", "notes": notes, "deadline": "2026-10-23"],
             "waiting": ["c": waitingSealed.c, "iv": waitingSealed.iv, "id": waitingID],
             "area": ["c": areaSealed.c, "iv": areaSealed.iv],
+            "note": ["c": noteSealed.c, "iv": noteSealed.iv, "id": summaryID],
         ]
         try JSONSerialization.data(withJSONObject: out).write(to: URL(fileURLWithPath: args[2]))
 
@@ -403,6 +435,14 @@ struct SectisSelfTest {
         check(try await SectisCloud.createEach(connection, [waitingWrite]) == [.created], "Sectis's rules accept a to-do waiting on someone, in a project")
         ids.append(waitingID)
 
+        // The meeting's summary, as a note in Sectis's Notepad on the project's page.
+        let summaryID = SectisFormat.summaryID(noteID: noteID)
+        let noteRecord = SectisFormat.noteRecord(id: summaryID, text: "Weekly sync — Oct 22\nWe reviewed the Q4 rollout.\n\n[Open in Sintr](sintr://note/\(noteID))",
+                                                 page: project?.notepadPage ?? "inbox", now: now)
+        let noteWrite = try SectisCloud.createWrite(connection, id: summaryID, kind: "note", record: noteRecord, version: version)
+        check(try await SectisCloud.createEach(connection, [noteWrite]) == [.created], "Sectis's rules accept the meeting's summary note")
+        check(try await SectisCloud.createEach(connection, [noteWrite]) == [.exists], "sending it again leaves the first one alone")
+
         let read = try await SectisCloud.readItems(ids + ["snnotthere001"], connection)
         if case .found(let record)? = read[waitingID] {
             let state = SectisFormat.todoState(id: waitingID, record: record)
@@ -440,7 +480,7 @@ struct SectisSelfTest {
 
         var output = (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: out)))) as? [String: Any] ?? [:]
         output["cloud"] = ["tagID": tagID ?? "", "ids": Array(ids.prefix(titles.count)), "titles": titles, "waitingID": waitingID,
-                           "projectID": "projemu00001", "areaID": "areaemu00001"] as [String: Any]
+                           "projectID": "projemu00001", "areaID": "areaemu00001", "noteID": summaryID] as [String: Any]
         try JSONSerialization.data(withJSONObject: output).write(to: URL(fileURLWithPath: out))
     }
 }

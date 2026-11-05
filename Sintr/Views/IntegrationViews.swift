@@ -117,7 +117,8 @@ enum AutoSend {
             if kind == .sectis {
                 // Once per note: Enhance words items a little differently each time, so sending
                 // again would add near-duplicates. Review & send on the Enhanced tab sends new ones.
-                guard Sectis.isOn(for: note), Sectis.lastSend(of: note) == nil, !Sectis.items(in: note).isEmpty else {
+                guard Sectis.isOn(for: note), Sectis.lastSend(of: note) == nil,
+                      !Sectis.items(in: note).isEmpty || (Sectis.sendsSummary && Sectis.summaryText(for: note) != nil) else {
                     continue
                 }
             } else if !IntegrationSettings.config(kind).autoSend {
@@ -237,6 +238,17 @@ private struct IntegrationSettingsRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    Toggle("Add a meeting summary to Sectis's Notepad", isOn: Binding(
+                        get: { config.sectis?.summaryNote ?? true },
+                        set: { value in
+                            var options = config.sectis ?? SectisOptions()
+                            options.summaryNote = value
+                            config.sectis = options
+                        }))
+                    Text("The Summary (and Decisions) from the enhanced notes go to Sectis's Notepad as a note, on the same project, area or Inbox as the to-dos, with a link back to the meeting. Sent once per meeting, like the to-dos.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     #if os(macOS)
                     TextField("Sectis address", text: Binding(
                         get: { config.sectis?.address ?? "" },
@@ -287,6 +299,7 @@ private struct IntegrationSettingsRow: View {
                 // Only what this row shows: the lists and folder choices may have changed since.
                 var options = IntegrationSettings.config(.sectis).sectis ?? SectisOptions()
                 options.waitingFor = value.sectis?.waitingFor
+                options.summaryNote = value.sectis?.summaryNote
                 options.address = value.sectis?.address
                 saved.sectis = options
             }

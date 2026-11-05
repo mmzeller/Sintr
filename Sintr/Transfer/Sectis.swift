@@ -5,7 +5,9 @@ import Foundation
 /// to follow up (Settings → Integrations → Sectis can turn that off). Each to-do is encrypted on
 /// this device with the key in your join code, exactly the way Sectis encrypts its own, so
 /// Firebase only stores scrambled data. They land in the Inbox — or the project or area you
-/// pick for the note or its folder — tagged "Meeting", with a link back to the note.
+/// pick for the note or its folder — tagged "Meeting", with a link back to the note. The
+/// meeting's summary goes along as a note in Sectis's Notepad, on that same page (Settings →
+/// Integrations → Sectis can turn that off).
 enum Sectis {
     /// The tag Sintr's to-dos get in Sectis (made the first time if you don't have it).
     static let tagName = "Meeting"
@@ -25,6 +27,18 @@ enum Sectis {
 
     /// Other people's action items go to Waiting For (Settings → Integrations → Sectis).
     static var sendsWaiting: Bool { options.waitingFor ?? true }
+
+    /// A summary of the meeting goes to Sectis's Notepad (Settings → Integrations → Sectis).
+    static var sendsSummary: Bool { options.summaryNote ?? true }
+
+    /// The note for Sectis's Notepad: the meeting's title and date, the summary from its
+    /// enhanced notes, and a link back. Nil before Enhance, or when the notes have no summary.
+    static func summaryText(for note: Note) -> String? {
+        guard let summary = SectisFormat.meetingSummary(note.enhanced) else { return nil }
+        return SectisFormat.summaryNoteText(title: note.displayTitle,
+                                            when: note.created.formatted(date: .abbreviated, time: .shortened),
+                                            summary: summary, link: link(to: note))
+    }
 
     // MARK: The note's switch
 
@@ -158,13 +172,15 @@ enum Sectis {
     // MARK: Sending
 
     /// Adds the note's action items to Sectis — `items` when you've picked and adjusted them,
-    /// otherwise all of them — in `place` (or wherever the note sends them). An item already
-    /// sent from this note (even if you've since completed or deleted it in Sectis) isn't
-    /// added again.
+    /// otherwise all of them — in `place` (or wherever the note sends them), and the meeting's
+    /// summary to Sectis's Notepad on that page. An item already sent from this note (even if
+    /// you've since completed or deleted it in Sectis) isn't added again, nor is the summary.
+    /// A meeting with a summary but no action items for you sends just the summary.
     static func send(_ note: Note, items chosen: [ActionItem]? = nil, place chosenPlace: SectisFormat.Place? = nil,
                      joinCode: String) async throws -> NoteSend {
         let items = chosen ?? self.items(in: note)
-        guard !items.isEmpty else {
+        let summaryNote = sendsSummary ? summaryText(for: note) : nil
+        guard !items.isEmpty || (chosen == nil && summaryNote != nil) else {
             throw IntegrationError.badTarget(chosen == nil ? noItemsMessage : "Tick at least one action item to send.")
         }
         let connection = try await connection(joinCode)
@@ -208,7 +224,19 @@ enum Sectis {
             ids.append(id)
         }
 
-        let results = try await SectisCloud.createEach(connection, writes)
+        // The summary, last: on the page the to-dos went to.
+        var summaryIndex: Int?
+        if let summaryNote {
+            let id = SectisFormat.summaryID(noteID: note.id.uuidString)
+            let record = SectisFormat.noteRecord(id: id, text: summaryNote, page: place.notepadPage, now: now)
+            summaryIndex = writes.count
+            writes.append(try SectisCloud.createWrite(connection, id: id, kind: "note", record: record, version: version))
+        }
+
+        let allResults = try await SectisCloud.createEach(connection, writes)
+        let results = Array(allResults.prefix(items.count))
+        let summaryResult = summaryIndex.map { allResults[$0] }
+        if items.isEmpty, case .failed(let message)? = summaryResult { throw SectisCloud.Failure(message: message) }
         let added = results.filter { $0 == .created }.count
         let existing = results.filter { $0 == .exists }.count
         let problems = results.compactMap { result -> String? in
@@ -219,15 +247,17 @@ enum Sectis {
             throw SectisCloud.Failure(message: problem)
         }
         let waitingCount = zip(items, results).filter { $0.0.waitingOn != nil && $0.1 == .created }.count
-        ActivityLog.add("Sent \(added) action item\(added == 1 ? "" : "s") to Sectis (\(waitingCount) waiting, \(place.isInbox ? "Inbox" : place.kind.rawValue))\(existing > 0 ? " (\(existing) already there)" : "")")
+        ActivityLog.add("Sent \(added) action item\(added == 1 ? "" : "s") to Sectis (\(waitingCount) waiting, \(place.isInbox ? "Inbox" : place.kind.rawValue))\(existing > 0 ? " (\(existing) already there)" : "")\(summaryResult == .created ? ", and the meeting summary to its Notepad" : "")")
         var summary: String
         switch (added, existing) {
+        case _ where items.isEmpty: summary = summaryResult == .created ? "meeting summary" : "summary already there"
         case (0, _): summary = "already there"
         case (_, 0): summary = "\(added) to-do\(added == 1 ? "" : "s")"
         default: summary = "\(added) new, \(existing) already there"
         }
         if waitingCount > 0 { summary += ", \(waitingCount) waiting" }
         if !problems.isEmpty { summary += ", \(problems.count) not sent" }
+        if !items.isEmpty, summaryResult == .created { summary += ", meeting summary" }
         summary += placeGone ? " · Inbox, as that list is gone" : place.isInbox ? "" : " · \(place.title)"
         let sentIDs = zip(ids, results).filter { !isFailure($0.1) }.map(\.0)
         return NoteSend(destination: "Sectis (\(summary))", items: sentIDs)
